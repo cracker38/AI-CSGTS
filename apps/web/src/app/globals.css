@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+:root {
+  /* Background system (light) */
+  --background: 246 250 252; /* very light blue-gray */
+  --foreground: 15 23 42; /* slate-900 */
+  --muted: 241 245 249; /* slate-100 */
+  --card: 255 255 255; /* true white cards for contrast */
+  --border: 226 232 240; /* slate-200 */
+  /* SaaS Blue palette (universally liked) */
+  --primary: 37 99 235; /* blue-600 */
+  --primary-2: 6 182 212; /* cyan-500 */
+  --danger: 220 38 38;
+  --warning: 245 158 11;
+  --success: 34 197 94;
+  --shadow: 2 6 23;
+}
+
+@theme inline {
+  --color-background: rgb(var(--background));
+  --color-foreground: rgb(var(--foreground));
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Background system (dark) */
+    --background: 2 6 23; /* slate-950 */
+    --foreground: 226 232 240; /* slate-200 */
+    --muted: 15 23 42; /* slate-900 */
+    --card: 3 7 18; /* slightly lifted from background */
+    --border: 30 41 59; /* slate-800 */
+  }
+}
+
+body {
+  background: rgb(var(--background));
+  color: rgb(var(--foreground));
+}
+
+.bg-grid {
+  background-image: radial-gradient(
+      circle at 1px 1px,
+      rgba(37, 99, 235, 0.14) 1px,
+      transparent 0
+    ),
+    radial-gradient(
+      circle at 1px 1px,
+      rgba(6, 182, 212, 0.09) 1px,
+      transparent 0
+    );
+  background-position:
+    0 0,
+    16px 16px;
+  background-size:
+    32px 32px,
+    32px 32px;
+}

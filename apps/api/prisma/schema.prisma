@@ -1,0 +1,326 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum RoleName {
+  EMPLOYEE
+  MANAGER
+  HR_ADMIN
+  SYSTEM_ADMIN
+}
+
+model Tenant {
+  id        String   @id @default(uuid()) @db.Char(36)
+  name      String   @db.VarChar(200)
+  slug      String   @unique @db.VarChar(100)
+  createdAt DateTime @default(now())
+
+  users User[]
+  roles Role[]
+  skills Skill[]
+  employeeSkills EmployeeSkill[]
+  certifications Certification[]
+  experienceTimeline ExperienceTimeline[]
+  projects Project[]
+  projectRequirements ProjectRequirement[]
+  trainingPrograms TrainingProgram[]
+  enrollments Enrollment[]
+  gapAnalysisSnapshots GapAnalysisSnapshot[]
+  recommendations Recommendation[]
+  loginHistory LoginHistory[]
+  activityLogs ActivityLog[]
+  auditLogs AuditLog[]
+
+  @@map("tenants")
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Char(36)
+  tenantId     String     @db.Char(36)
+  email        String     @db.VarChar(255)
+  passwordHash String     @db.VarChar(255)
+  fullName     String     @db.VarChar(200)
+  department   String?    @db.VarChar(200)
+  title        String?    @db.VarChar(200)
+  status       UserStatus @default(PENDING)
+  approvedAt   DateTime?
+  approvedBy   String?    @db.Char(36)
+  createdAt    DateTime   @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  roles  UserRole[]
+
+  employeeSkills EmployeeSkill[]
+  certifications Certification[]
+  experienceTimeline ExperienceTimeline[]
+  enrollments Enrollment[]
+  gapAnalysisSnapshots GapAnalysisSnapshot[]
+  recommendations Recommendation[]
+  loginHistory LoginHistory[]
+  activityLogs ActivityLog[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId, status])
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Char(36)
+  tenantId    String   @db.Char(36)
+  name        RoleName
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  users  UserRole[]
+
+  @@unique([tenantId, name])
+  @@map("roles")
+}
+
+model UserRole {
+  userId    String   @db.Char(36)
+  roleId    String   @db.Char(36)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+  role Role @relation(fields: [roleId], references: [id])
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model Skill {
+  id          String   @id @default(uuid()) @db.Char(36)
+  tenantId    String   @db.Char(36)
+  name        String   @db.VarChar(200)
+  category    String?  @db.VarChar(200)
+  description String?  @db.Text
+  active      Boolean  @default(true)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  employeeSkills EmployeeSkill[]
+  projectRequirements ProjectRequirement[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, category])
+  @@map("skills")
+}
+
+model EmployeeSkill {
+  id                String   @id @default(uuid()) @db.Char(36)
+  tenantId          String   @db.Char(36)
+  userId            String   @db.Char(36)
+  skillId           String   @db.Char(36)
+  level             String   @db.VarChar(20)
+  selfScore         Int?
+  managerScore      Int?
+  endorsementsCount Int      @default(0)
+  lastUsedAt        DateTime?
+  updatedAt         DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+  skill  Skill  @relation(fields: [skillId], references: [id])
+
+  @@unique([tenantId, userId, skillId])
+  @@index([tenantId, userId])
+  @@map("employee_skills")
+}
+
+model Certification {
+  id        String  @id @default(uuid()) @db.Char(36)
+  tenantId  String  @db.Char(36)
+  userId    String  @db.Char(36)
+  name      String  @db.VarChar(200)
+  issuer    String? @db.VarChar(200)
+  issuedOn  DateTime?
+  expiresOn DateTime?
+  fileUrl   String? @db.VarChar(500)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, userId])
+  @@map("certifications")
+}
+
+model ExperienceTimeline {
+  id        String   @id @default(uuid()) @db.Char(36)
+  tenantId  String   @db.Char(36)
+  userId    String   @db.Char(36)
+  org       String   @db.VarChar(200)
+  role      String   @db.VarChar(200)
+  startDate DateTime
+  endDate   DateTime?
+  summary   String?  @db.Text
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, userId])
+  @@map("experience_timeline")
+}
+
+model Project {
+  id        String   @id @default(uuid()) @db.Char(36)
+  tenantId  String   @db.Char(36)
+  name      String   @db.VarChar(200)
+  code      String?  @db.VarChar(50)
+  status    String   @default("PLANNED") @db.VarChar(50)
+  startDate DateTime?
+  endDate   DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  requirements ProjectRequirement[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@map("projects")
+}
+
+model ProjectRequirement {
+  id               String @id @default(uuid()) @db.Char(36)
+  tenantId         String @db.Char(36)
+  projectId        String @db.Char(36)
+  skillId          String @db.Char(36)
+  requiredLevel    String @db.VarChar(20)
+  requiredHeadcount Int  @default(1)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
+  skill   Skill   @relation(fields: [skillId], references: [id])
+
+  @@unique([tenantId, projectId, skillId])
+  @@map("project_requirements")
+}
+
+model TrainingProgram {
+  id            String   @id @default(uuid()) @db.Char(36)
+  tenantId      String   @db.Char(36)
+  title         String   @db.VarChar(255)
+  provider      String   @db.VarChar(50)
+  url           String?  @db.VarChar(500)
+  durationHours Int?
+  cost          Decimal? @db.Decimal(12, 2)
+  skillsCoveredJson Json?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  enrollments Enrollment[]
+
+  @@index([tenantId, provider])
+  @@map("training_programs")
+}
+
+model Enrollment {
+  id               String   @id @default(uuid()) @db.Char(36)
+  tenantId         String   @db.Char(36)
+  userId           String   @db.Char(36)
+  trainingProgramId String  @db.Char(36)
+  status           String   @default("PLANNED") @db.VarChar(20)
+  progressPercent  Int      @default(0)
+  startedAt        DateTime?
+  completedAt      DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+  trainingProgram TrainingProgram @relation(fields: [trainingProgramId], references: [id])
+
+  @@index([tenantId, userId])
+  @@map("enrollments")
+}
+
+model GapAnalysisSnapshot {
+  id            String   @id @default(uuid()) @db.Char(36)
+  tenantId      String   @db.Char(36)
+  userId        String   @db.Char(36)
+  scopeType     String   @db.VarChar(20)
+  scopeId       String   @db.Char(36)
+  severityScore Decimal  @default(0) @db.Decimal(6, 2)
+  resultJson    Json
+  createdAt     DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, userId, createdAt])
+  @@map("gap_analysis_snapshots")
+}
+
+model Recommendation {
+  id         String   @id @default(uuid()) @db.Char(36)
+  tenantId   String   @db.Char(36)
+  userId     String   @db.Char(36)
+  type       String   @db.VarChar(30)
+  payloadJson Json
+  confidence Decimal  @default(0) @db.Decimal(4, 3)
+  createdAt  DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, userId, createdAt])
+  @@map("recommendations")
+}
+
+model LoginHistory {
+  id        String   @id @default(uuid()) @db.Char(36)
+  tenantId  String   @db.Char(36)
+  userId    String   @db.Char(36)
+  ip        String?  @db.VarChar(100)
+  userAgent String?  @db.VarChar(500)
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, userId, createdAt])
+  @@map("login_history")
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid()) @db.Char(36)
+  tenantId  String   @db.Char(36)
+  userId    String   @db.Char(36)
+  action    String   @db.VarChar(100)
+  entityType String? @db.VarChar(100)
+  entityId  String?  @db.Char(36)
+  metadataJson Json?
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, userId, createdAt])
+  @@map("activity_logs")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Char(36)
+  tenantId    String   @db.Char(36)
+  actorUserId String?  @db.Char(36)
+  eventType   String   @db.VarChar(100)
+  entityType  String?  @db.VarChar(100)
+  entityId    String?  @db.Char(36)
+  beforeJson  Json?
+  afterJson   Json?
+  ip          String?  @db.VarChar(100)
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@map("audit_logs")
+}
+
