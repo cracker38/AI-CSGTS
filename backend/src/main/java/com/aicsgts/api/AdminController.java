@@ -4,6 +4,8 @@ import com.aicsgts.domain.*;
 import com.aicsgts.repo.*;
 import com.aicsgts.security.AuthPrincipal;
 import com.aicsgts.service.AuditService;
+import com.aicsgts.service.CompliancePackService;
+import com.aicsgts.service.SkillHealthPptService;
 import jakarta.annotation.Nullable;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
@@ -12,7 +14,9 @@ import jakarta.validation.constraints.NotNull;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -40,6 +44,9 @@ public class AdminController {
   private final PasswordEncoder encoder;
   private final PermissionRepository permissions;
   private final RolePermissionRepository rolePermissions;
+  private final LoginEventRepository loginEvents;
+  private final CompliancePackService compliancePackService;
+  private final SkillHealthPptService skillHealthPptService;
 
   public AdminController(
       AppUserRepository users,
@@ -50,7 +57,10 @@ public class AdminController {
       AuditService auditService,
       PasswordEncoder encoder,
       PermissionRepository permissions,
-      RolePermissionRepository rolePermissions
+      RolePermissionRepository rolePermissions,
+      LoginEventRepository loginEvents,
+      CompliancePackService compliancePackService,
+      SkillHealthPptService skillHealthPptService
   ) {
     this.users = users;
     this.departments = departments;
@@ -61,6 +71,9 @@ public class AdminController {
     this.encoder = encoder;
     this.permissions = permissions;
     this.rolePermissions = rolePermissions;
+    this.loginEvents = loginEvents;
+    this.compliancePackService = compliancePackService;
+    this.skillHealthPptService = skillHealthPptService;
   }
 
   private AuthPrincipal principal() {
@@ -74,10 +87,6 @@ public class AdminController {
   @PostMapping("/users")
   @PreAuthorize("hasAuthority('ADMIN_USER_MANAGEMENT')")
   public Map<String, Object> createUser(@Valid @RequestBody CreateUserRequest req) {
-    if (req.role() == Role.EMPLOYEE) {
-      return Map.of("error", "EMPLOYEES_MUST_SELF_REGISTER");
-    }
-
     if (users.findByEmail(req.email()).isPresent()) {
       return Map.of("error", "EMAIL_ALREADY_EXISTS");
     }
@@ -181,13 +190,19 @@ public class AdminController {
     if (first.isEmpty()) {
       SystemConfig sc = new SystemConfig();
       sc.setGapAlertRank(2);
+      sc.setScheduledReportingEnabled(false);
       config.save(sc);
-      Map<String, Object> payload = new LinkedHashMap<>();
-      payload.put("gapAlertRank", sc.getGapAlertRank());
-      return payload;
+      return configPayload(sc);
     }
+    return configPayload(first.get());
+  }
+
+  private static Map<String, Object> configPayload(SystemConfig sc) {
     Map<String, Object> payload = new LinkedHashMap<>();
-    payload.put("gapAlertRank", first.get().getGapAlertRank());
+    payload.put("gapAlertRank", sc.getGapAlertRank());
+    payload.put("integrationsJson", sc.getIntegrationsJson() == null ? "" : sc.getIntegrationsJson());
+    payload.put("scheduledReportingEnabled", sc.isScheduledReportingEnabled());
+    payload.put("reportingRecipientEmail", sc.getReportingRecipientEmail() == null ? "" : sc.getReportingRecipientEmail());
     return payload;
   }
 
@@ -196,9 +211,38 @@ public class AdminController {
   public Map<String, Object> updateConfig(@Valid @RequestBody ConfigRequest req) {
     SystemConfig sc = config.findAll().stream().findFirst().orElseGet(() -> config.save(new SystemConfig()));
     sc.setGapAlertRank(req.gapAlertRank());
+    if (req.integrationsJson() != null) {
+      sc.setIntegrationsJson(req.integrationsJson().isBlank() ? null : req.integrationsJson());
+    }
+    if (req.scheduledReportingEnabled() != null) {
+      sc.setScheduledReportingEnabled(req.scheduledReportingEnabled());
+    }
+    if (req.reportingRecipientEmail() != null) {
+      sc.setReportingRecipientEmail(req.reportingRecipientEmail().isBlank() ? null : req.reportingRecipientEmail().trim());
+    }
     config.save(sc);
     auditService.log("ADMIN_UPDATE_CONFIG", "gapAlertRank=" + req.gapAlertRank());
     return Map.of("status", "UPDATED");
+  }
+
+  @GetMapping("/audit/compliance-pack.zip")
+  @PreAuthorize("hasAuthority('ADMIN_AUDIT')")
+  public ResponseEntity<byte[]> compliancePack() throws Exception {
+    byte[] zip = compliancePackService.buildPack();
+    return ResponseEntity.ok()
+        .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=audit-compliance-pack.zip")
+        .contentType(MediaType.parseMediaType("application/zip"))
+        .body(zip);
+  }
+
+  @GetMapping("/reports/skill-health.pptx")
+  @PreAuthorize("hasAuthority('ADMIN_CONFIG')")
+  public ResponseEntity<byte[]> skillHealthPptx() throws Exception {
+    byte[] pptx = skillHealthPptService.buildOrgSkillHealthDeck();
+    return ResponseEntity.ok()
+        .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=skill-health.pptx")
+        .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.presentationml.presentation"))
+        .body(pptx);
   }
 
   @GetMapping("/audit")
@@ -250,6 +294,47 @@ public class AdminController {
     return audit.findTop100ByOrderByCreatedAtDesc().stream().map(this::auditRow).toList();
   }
 
+  @GetMapping("/login-events")
+  @PreAuthorize("hasAuthority('ADMIN_AUDIT')")
+  @Transactional(readOnly = true)
+  public Map<String, Object> loginEventPage(
+      @RequestParam(name = "page", defaultValue = "0") int page,
+      @RequestParam(name = "size", defaultValue = "25") int size
+  ) {
+    int safeSize = Math.min(Math.max(size, 1), 100);
+    int safePage = Math.max(page, 0);
+    Pageable p = PageRequest.of(safePage, safeSize);
+    Page<LoginEvent> result = loginEvents.findAllByOrderByCreatedAtDesc(p);
+    List<Map<String, Object>> content = result.getContent().stream().map(this::loginEventRow).toList();
+    Map<String, Object> out = new LinkedHashMap<>();
+    out.put("content", content);
+    out.put("totalElements", result.getTotalElements());
+    out.put("totalPages", result.getTotalPages());
+    out.put("number", result.getNumber());
+    out.put("size", result.getSize());
+    return out;
+  }
+
+  private Map<String, Object> loginEventRow(LoginEvent e) {
+    Map<String, Object> row = new LinkedHashMap<>();
+    row.put("id", e.getId());
+    row.put("success", e.isSuccess());
+    row.put("emailAttempt", e.getEmailAttempt());
+    row.put("ipAddress", e.getIpAddress());
+    row.put("userAgent", e.getUserAgent());
+    row.put("createdAt", e.getCreatedAt());
+    if (e.getUser() == null) {
+      row.put("user", null);
+    } else {
+      Map<String, Object> u = new LinkedHashMap<>();
+      u.put("id", e.getUser().getId());
+      u.put("name", e.getUser().getName());
+      u.put("email", e.getUser().getEmail());
+      row.put("user", u);
+    }
+    return row;
+  }
+
   @PostMapping(value = "/users/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
   @PreAuthorize("hasAuthority('ADMIN_IMPORT_EXPORT')")
   public Map<String, Object> importUsers(@RequestParam("file") MultipartFile file) throws Exception {
@@ -273,7 +358,6 @@ public class AdminController {
         Long departmentId = Long.valueOf(cols[4].trim());
         Long jobRoleId = cols.length >= 6 && !cols[5].trim().isEmpty() ? Long.valueOf(cols[5].trim()) : null;
 
-        if (role == Role.EMPLOYEE) continue; // enforced rule
         if (users.findByEmail(email).isPresent()) continue;
 
         Department dept = departments.findById(departmentId).orElse(null);
@@ -311,7 +395,12 @@ public class AdminController {
 
   public record DepartmentRequest(@NotBlank String name) {}
 
-  public record ConfigRequest(@NotNull Integer gapAlertRank) {}
+  public record ConfigRequest(
+      @NotNull Integer gapAlertRank,
+      @Nullable String integrationsJson,
+      @Nullable Boolean scheduledReportingEnabled,
+      @Nullable String reportingRecipientEmail
+  ) {}
 
   @GetMapping("/permissions")
   @PreAuthorize("hasAuthority('ADMIN_CONFIG')")

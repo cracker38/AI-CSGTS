@@ -25,6 +25,8 @@ This is a modular full-stack MVP using:
 3. Backend runs on:
    - `http://localhost:8080`
 
+**Optional LLM (OpenAI-compatible):** set environment variable `OPENAI_API_KEY` before starting the backend. Job-description NLP (`POST /api/hr/nlp/job-description`) then merges an LLM-extracted summary, responsibilities, requirements, and skill phrases with the local tokenizer. Employee dashboard **AI insights** add coaching text when the model responds; on any API or parse error, behavior falls back to heuristics only. Override defaults with `OPENAI_BASE_URL`, `OPENAI_MODEL`, or `app.ai.force-disabled: true` in `application.yml` to turn LLM calls off even if a key is present.
+
 ## 3) Frontend setup
 
 1. Install dependencies:
@@ -42,13 +44,16 @@ On first backend start, a default admin is bootstrapped:
 - Email: `admin@aicsgts.local`
 - Password: `Admin123!`
 
-Employees must self-register via:
-- `POST /api/auth/register`
+- **Managers and HR** self-register with `POST /api/auth/register` (body must set `role` to `MANAGER` or `HR` only).
+- **Employees** are created by an admin with `POST /api/admin/users` (role `EMPLOYEE`) or CSV import — not via the public registration page.
+
+Optional: to fix legacy rows in MySQL, see `backend/src/main/resources/db/fix-shema-manager.sql`.
 
 ## 5) Core API endpoints (MVP)
 
 ### Authentication
-- `POST /api/auth/register` (self-registers as `EMPLOYEE`)
+- `POST /api/auth/register` (self-registers as `MANAGER` or `HR` only; body includes `role`, `departmentId`, optional `jobRoleId`)
+- `GET /api/public/registration-options` (departments, job roles, and staff role metadata for the registration UI)
 - `POST /api/auth/login`
 - `GET /api/auth/me`
 
@@ -59,12 +64,13 @@ Employees must self-register via:
 - `DELETE /api/employee/skills/{skillId}`
 
 ### Manager
-- `GET /api/manager/dashboard`
+- `GET /api/manager/dashboard` (team roster = `users.role = EMPLOYEE` in your department, excluding your own account)
 - `POST /api/manager/projects/{projectId}/auto-allocate`
 
 ### HR
-- `GET /api/hr/employees`
-- `PATCH /api/hr/employees/{id}/activate`
+- `GET /api/hr/stats` (`totalUsers` / `activeUsers` = employees only; training counts = assignments for `role = EMPLOYEE` only)
+- `GET /api/hr/employees` (returns `users` with `role = EMPLOYEE` only)
+- `PATCH /api/hr/employees/{id}/activate` (employees only; managers/HR cannot be toggled here)
 - `GET/POST /api/hr/skills`
 - `GET/POST /api/hr/job-roles`
 - `POST /api/hr/job-roles/{jobRoleId}/required-skills`
@@ -75,7 +81,7 @@ Employees must self-register via:
 - `POST /api/hr/training-assignments/{id}/reject`
 
 ### Admin
-- `POST /api/admin/users` (creates `MANAGER`/`HR`/`ADMIN` only; `EMPLOYEE` rejected)
+- `POST /api/admin/users` (creates `EMPLOYEE` / `MANAGER` / `HR` / `ADMIN`)
 - `GET /api/admin/users`
 - `PATCH /api/admin/users/{id}/activate`
 - `POST/GET /api/admin/departments`

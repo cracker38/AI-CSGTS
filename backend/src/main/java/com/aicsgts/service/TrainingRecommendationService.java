@@ -15,6 +15,8 @@ public class TrainingRecommendationService {
       Long programId,
       String title,
       String description,
+      String provider,
+      String deliveryFormat,
       Long skillId,
       String gapColor,
       boolean priority
@@ -66,10 +68,13 @@ public class TrainingRecommendationService {
       }
 
       for (TrainingProgram p : candidates.stream().limit(2).toList()) {
+        String fmt = p.getDeliveryFormat() == null ? null : p.getDeliveryFormat().name();
         out.add(new RecommendedTraining(
             p.getId(),
             p.getTitle(),
             p.getDescription(),
+            p.getProvider(),
+            fmt,
             item.skillId(),
             item.color(),
             priority

@@ -1,6 +1,7 @@
 package com.aicsgts.api;
 
 import com.aicsgts.domain.AppUser;
+import com.aicsgts.domain.Role;
 import com.aicsgts.domain.TrainingAssignment;
 import com.aicsgts.repo.AppUserRepository;
 import com.aicsgts.repo.AuditLogRepository;
@@ -62,6 +63,7 @@ public class ActivitySummaryController {
       case EMPLOYEE -> employeeSummary(p.getUserId());
       case MANAGER -> managerSummary(p.getUserId());
       case HR -> hrSummary();
+      case EXECUTIVE -> executiveSummary();
       case ADMIN -> adminSummary();
     };
   }
@@ -105,7 +107,9 @@ public class ActivitySummaryController {
     long pending = trainingAssignments.findByStatusAndEmployeeDepartmentId(
         TrainingAssignment.Status.REQUESTED,
         me.getDepartment().getId()
-    ).size();
+    ).stream()
+        .filter(ta -> ta.getEmployee().getRole() == Role.EMPLOYEE)
+        .count();
     List<Map<String, String>> items = new ArrayList<>();
     if (pending > 0) {
       items.add(item(
@@ -134,6 +138,13 @@ public class ActivitySummaryController {
       items.add(item("", "/hr", "No pending training requests"));
     }
     return out((int) Math.min(99, pending), items);
+  }
+
+  private Map<String, Object> executiveSummary() {
+    List<Map<String, String>> items = List.of(
+        item("", "/executive", "Open the executive dashboard for org-wide readiness and training KPIs")
+    );
+    return out(0, items);
   }
 
   private Map<String, Object> adminSummary() {

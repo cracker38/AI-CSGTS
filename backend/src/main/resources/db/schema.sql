@@ -3,12 +3,15 @@
 
 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0;
 
+DROP TABLE IF EXISTS manager_skill_assessments;
+DROP TABLE IF EXISTS employee_certifications;
 DROP TABLE IF EXISTS project_assignments;
 DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS training_assignments;
 DROP TABLE IF EXISTS training_programs;
 DROP TABLE IF EXISTS required_skills;
 DROP TABLE IF EXISTS employee_skills;
+DROP TABLE IF EXISTS login_events;
 DROP TABLE IF EXISTS audit_logs;
 DROP TABLE IF EXISTS role_permissions;
 DROP TABLE IF EXISTS permissions;
@@ -29,12 +32,14 @@ CREATE TABLE departments (
 CREATE TABLE job_roles (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
+  description_text LONGTEXT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE skills (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(255) NOT NULL UNIQUE,
+  category VARCHAR(128) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -78,6 +83,8 @@ CREATE TABLE training_programs (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   title VARCHAR(255) NOT NULL,
   description VARCHAR(2000) NULL,
+  provider VARCHAR(255) NULL,
+  delivery_format VARCHAR(32) NULL DEFAULT 'ONLINE',
   skill_id BIGINT NOT NULL,
   target_level VARCHAR(32) NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -111,9 +118,37 @@ CREATE TABLE project_assignments (
   project_id BIGINT NOT NULL,
   employee_id BIGINT NOT NULL,
   assigned_role VARCHAR(255) NULL,
+  position INT NOT NULL DEFAULT 0,
   assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_project_assignments_project FOREIGN KEY (project_id) REFERENCES projects(id),
   CONSTRAINT fk_project_assignments_employee FOREIGN KEY (employee_id) REFERENCES users(id)
+);
+
+CREATE TABLE employee_certifications (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  employee_id BIGINT NOT NULL,
+  title VARCHAR(500) NOT NULL,
+  issuer VARCHAR(500) NULL,
+  expires_at TIMESTAMP(6) NULL,
+  file_name VARCHAR(500) NOT NULL,
+  content_type VARCHAR(200) NULL,
+  storage_path VARCHAR(1000) NOT NULL,
+  file_size BIGINT NOT NULL,
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  CONSTRAINT fk_employee_certifications_employee FOREIGN KEY (employee_id) REFERENCES users(id)
+);
+
+CREATE TABLE manager_skill_assessments (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  manager_id BIGINT NOT NULL,
+  employee_id BIGINT NOT NULL,
+  skill_id BIGINT NOT NULL,
+  assessed_level VARCHAR(32) NOT NULL,
+  note VARCHAR(2000) NULL,
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  CONSTRAINT fk_manager_skill_assessments_manager FOREIGN KEY (manager_id) REFERENCES users(id),
+  CONSTRAINT fk_manager_skill_assessments_employee FOREIGN KEY (employee_id) REFERENCES users(id),
+  CONSTRAINT fk_manager_skill_assessments_skill FOREIGN KEY (skill_id) REFERENCES skills(id)
 );
 
 CREATE TABLE audit_logs (
@@ -123,6 +158,17 @@ CREATE TABLE audit_logs (
   details VARCHAR(4000) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_audit_logs_actor FOREIGN KEY (actor_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE login_events (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NULL,
+  email_attempt VARCHAR(255) NULL,
+  success BIT NOT NULL,
+  ip_address VARCHAR(64) NULL,
+  user_agent VARCHAR(512) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_login_events_user FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
 CREATE TABLE permissions (
@@ -142,6 +188,9 @@ CREATE TABLE role_permissions (
 
 CREATE TABLE system_config (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
-  gap_alert_rank INT NOT NULL DEFAULT 2
+  gap_alert_rank INT NOT NULL DEFAULT 2,
+  integrations_json LONGTEXT NULL,
+  scheduled_reporting_enabled BIT NOT NULL DEFAULT 0,
+  reporting_recipient_email VARCHAR(320) NULL
 );
 

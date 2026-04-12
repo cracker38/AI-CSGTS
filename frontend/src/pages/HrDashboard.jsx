@@ -1,19 +1,20 @@
 import React, { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
+import { HR_SIDEBAR_ITEMS as TAB_CONFIG, parseHrTab } from './dashboard/dashboardNavConfig.js'
 import { RoleAlerts, RoleCard, RoleTable, SmallBoxKpi } from './dashboard/dashboardRoleUi.jsx'
+import CsgtsModuleMap from './dashboard/CsgtsModuleMap.jsx'
 
 const LEVELS = ['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT']
 
-const TAB_CONFIG = [
-  { id: 'overview', label: 'Overview', icon: 'bi-speedometer2' },
-  { id: 'people', label: 'Employees', icon: 'bi-people' },
-  { id: 'taxonomy', label: 'Skill taxonomy', icon: 'bi-diagram-3' },
-  { id: 'training', label: 'Training programs', icon: 'bi-journal-bookmark' },
-  { id: 'workflows', label: 'Approvals & requests', icon: 'bi-inboxes' }
-]
-
 export default function HrDashboard() {
-  const [tab, setTab] = useState('overview')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tab = parseHrTab(searchParams)
+
+  function setTab(next) {
+    if (next === 'overview') setSearchParams({}, { replace: true })
+    else setSearchParams({ tab: next }, { replace: true })
+  }
   const [stats, setStats] = useState(null)
   const [employees, setEmployees] = useState([])
   const [skills, setSkills] = useState([])
@@ -25,6 +26,7 @@ export default function HrDashboard() {
   const [busy, setBusy] = useState(false)
 
   const [newSkill, setNewSkill] = useState('')
+  const [newSkillCategory, setNewSkillCategory] = useState('')
   const [newRole, setNewRole] = useState('')
   const [reqRoleId, setReqRoleId] = useState('')
   const [reqSkillId, setReqSkillId] = useState('')
@@ -34,9 +36,16 @@ export default function HrDashboard() {
   const [tpDesc, setTpDesc] = useState('')
   const [tpSkillId, setTpSkillId] = useState('')
   const [tpLevel, setTpLevel] = useState('INTERMEDIATE')
+  const [tpProvider, setTpProvider] = useState('')
+  const [tpFormat, setTpFormat] = useState('ONLINE')
 
   const [asEmp, setAsEmp] = useState('')
   const [asProg, setAsProg] = useState('')
+
+  const [jdText, setJdText] = useState('')
+  const [nlpPaste, setNlpPaste] = useState('')
+  const [nlpResult, setNlpResult] = useState(null)
+  const [succession, setSuccession] = useState([])
 
   async function loadAll() {
     setError('')
@@ -57,7 +66,7 @@ export default function HrDashboard() {
     if (rolesRes.data.length && !reqRoleId) setReqRoleId(String(rolesRes.data[0].id))
     if (skillsRes.data.length && !reqSkillId) setReqSkillId(String(skillsRes.data[0].id))
     if (skillsRes.data.length && !tpSkillId) setTpSkillId(String(skillsRes.data[0].id))
-    const emps = (empRes.data || []).filter((u) => u.role === 'EMPLOYEE')
+    const emps = empRes.data || []
     if (emps.length && !asEmp) setAsEmp(String(emps[0].id))
     if (trainingsRes.data.length && !asProg) setAsProg(String(trainingsRes.data[0].id))
   }
@@ -67,14 +76,33 @@ export default function HrDashboard() {
   }, [])
 
   useEffect(() => {
-    const sync = () => {
-      const h = (window.location.hash || '').replace(/^#/, '')
-      if (h === 'workflows') setTab('workflows')
-      if (h === 'training') setTab('training')
+    if (tab !== 'taxonomy' || !reqRoleId) return
+    let alive = true
+    api
+      .get(`/api/hr/job-roles/${reqRoleId}`)
+      .then((res) => {
+        if (alive) setJdText(res.data?.descriptionText || '')
+      })
+      .catch(() => {
+        if (alive) setJdText('')
+      })
+    return () => {
+      alive = false
     }
-    sync()
-    window.addEventListener('hashchange', sync)
-    return () => window.removeEventListener('hashchange', sync)
+  }, [tab, reqRoleId])
+
+  useEffect(() => {
+    if (tab !== 'succession') return
+    api
+      .get('/api/hr/succession')
+      .then((res) => setSuccession(res.data || []))
+      .catch(() => setSuccession([]))
+  }, [tab])
+
+  useEffect(() => {
+    const h = (window.location.hash || '').replace(/^#/, '')
+    if (h === 'workflows') setTab('workflows')
+    else if (h === 'training') setTab('training')
   }, [])
 
   useEffect(() => {
@@ -105,8 +133,12 @@ export default function HrDashboard() {
     if (!newSkill.trim()) return
     setBusy(true)
     try {
-      await api.post('/api/hr/skills', { name: newSkill.trim() })
+      await api.post('/api/hr/skills', {
+        name: newSkill.trim(),
+        category: newSkillCategory.trim() || null
+      })
       setNewSkill('')
+      setNewSkillCategory('')
       await loadAll()
       setMsg('Skill created.')
     } catch (e) {
@@ -159,10 +191,13 @@ export default function HrDashboard() {
         title: tpTitle.trim(),
         description: tpDesc,
         skillId: Number(tpSkillId),
-        targetLevel: tpLevel
+        targetLevel: tpLevel,
+        provider: tpProvider.trim() || null,
+        deliveryFormat: tpFormat
       })
       setTpTitle('')
       setTpDesc('')
+      setTpProvider('')
       await loadAll()
       setMsg('Training program created.')
     } catch (e) {
@@ -197,6 +232,38 @@ export default function HrDashboard() {
       await loadAll()
     } catch (e) {
       setError(e?.response?.data?.error || 'APPROVE_FAILED')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveJobDescription(e) {
+    e.preventDefault()
+    if (!reqRoleId) return
+    setBusy(true)
+    setMsg('')
+    try {
+      await api.patch(`/api/hr/job-roles/${reqRoleId}/description`, { descriptionText: jdText })
+      setMsg('Job description saved.')
+      await loadAll()
+    } catch (err) {
+      setError(err?.response?.data?.error || 'SAVE_FAILED')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function runNlp(e) {
+    e.preventDefault()
+    if (!nlpPaste.trim()) return
+    setBusy(true)
+    setNlpResult(null)
+    try {
+      const res = await api.post('/api/hr/nlp/job-description', { text: nlpPaste })
+      setNlpResult(res.data)
+      setMsg('NLP analysis complete.')
+    } catch (err) {
+      setError(err?.response?.data?.error || 'NLP_FAILED')
     } finally {
       setBusy(false)
     }
@@ -251,7 +318,7 @@ export default function HrDashboard() {
         <>
           <div className="row g-3 mb-3">
             <div className="col-lg-4 col-md-6">
-              <SmallBoxKpi value={stats.totalUsers} label="Total users" variant="primary" iconClass="bi-people" />
+              <SmallBoxKpi value={stats.totalUsers} label="Total employees" variant="primary" iconClass="bi-people" />
             </div>
             <div className="col-lg-4 col-md-6">
               <SmallBoxKpi value={stats.activeUsers} label="Active accounts" variant="success" iconClass="bi-person-check" />
@@ -274,10 +341,11 @@ export default function HrDashboard() {
               />
             </div>
           </div>
-          <div className="alert alert-light border mb-0">
+          <div className="alert alert-light border mb-3">
             Use the tabs to manage people, define skills and job requirements, publish training, and move requests through approval
             workflows.
           </div>
+          <CsgtsModuleMap role="HR" />
         </>
       )}
 
@@ -332,13 +400,22 @@ export default function HrDashboard() {
           <div className="col-lg-6">
             <RoleCard title="Add skill" iconClass="bi-plus-lg">
               <form onSubmit={createSkill} className="row g-2 align-items-end">
-                <div className="col-12">
+                <div className="col-md-7">
                   <label className="form-label">Skill name</label>
                   <input
                     className="form-control"
                     value={newSkill}
                     onChange={(e) => setNewSkill(e.target.value)}
                     placeholder="e.g. Kubernetes"
+                  />
+                </div>
+                <div className="col-md-5">
+                  <label className="form-label">Category (optional)</label>
+                  <input
+                    className="form-control"
+                    value={newSkillCategory}
+                    onChange={(e) => setNewSkillCategory(e.target.value)}
+                    placeholder="e.g. Cloud / Security"
                   />
                 </div>
                 <div className="col-12">
@@ -350,8 +427,9 @@ export default function HrDashboard() {
               <p className="small text-body-secondary mt-3 mb-2">Catalog ({skills.length})</p>
               <div className="d-flex flex-wrap gap-1">
                 {skills.map((s) => (
-                  <span key={s.id} className="badge text-bg-light text-dark border">
+                  <span key={s.id} className="badge text-bg-light text-dark border" title={s.category || undefined}>
                     {s.name}
+                    {s.category ? <span className="text-body-secondary ms-1">· {s.category}</span> : null}
                   </span>
                 ))}
               </div>
@@ -413,7 +491,155 @@ export default function HrDashboard() {
               </form>
             </RoleCard>
           </div>
+          <div className="col-12">
+            <RoleCard title="Job description &amp; NLP" iconClass="bi-file-text">
+              <p className="small text-body-secondary">
+                Local n-grams, extractive summary, and taxonomy match. With <code>OPENAI_API_KEY</code> set on the server, an LLM layer adds structured summary / responsibilities / requirements and extra skill hints (falls back if the API fails).
+              </p>
+              <form onSubmit={saveJobDescription} className="mb-3">
+                <label className="form-label">Description for selected job role</label>
+                <textarea
+                  className="form-control mb-2"
+                  rows={5}
+                  value={jdText}
+                  onChange={(e) => setJdText(e.target.value)}
+                  placeholder="Paste responsibilities, tools, and seniority signals…"
+                />
+                <button type="submit" className="btn btn-primary btn-sm" disabled={busy || !reqRoleId}>
+                  Save description
+                </button>
+              </form>
+              <form onSubmit={runNlp}>
+                <label className="form-label">Analyze any text</label>
+                <textarea
+                  className="form-control mb-2"
+                  rows={4}
+                  value={nlpPaste}
+                  onChange={(e) => setNlpPaste(e.target.value)}
+                  placeholder="Paste a job description snippet to extract keywords and skill hints…"
+                />
+                <button type="submit" className="btn btn-outline-primary btn-sm" disabled={busy}>
+                  Run NLP pass
+                </button>
+              </form>
+              {nlpResult && (
+                <div className="mt-3 small">
+                  <p className="fw-semibold mb-1">Model: {nlpResult.model}</p>
+                  {nlpResult.extractiveSummary ? (
+                    <div className="mb-2">
+                      <p className="text-body-secondary mb-1">Extractive summary</p>
+                      <p className="mb-0">{nlpResult.extractiveSummary}</p>
+                    </div>
+                  ) : null}
+                  {nlpResult.llm?.summary ? (
+                    <div className="mb-2">
+                      <p className="text-body-secondary mb-1">LLM summary</p>
+                      <p className="mb-0">{nlpResult.llm.summary}</p>
+                    </div>
+                  ) : null}
+                  {(nlpResult.llm?.responsibilities || []).length > 0 ? (
+                    <div className="mb-2">
+                      <p className="text-body-secondary mb-1">Responsibilities (LLM)</p>
+                      <ul className="mb-0">
+                        {nlpResult.llm.responsibilities.slice(0, 12).map((r, i) => (
+                          <li key={i}>{r}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {(nlpResult.llm?.requirements || []).length > 0 ? (
+                    <div className="mb-2">
+                      <p className="text-body-secondary mb-1">Requirements (LLM)</p>
+                      <ul className="mb-0">
+                        {nlpResult.llm.requirements.slice(0, 12).map((r, i) => (
+                          <li key={i}>{r}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  <p className="text-body-secondary mb-1">Top terms</p>
+                  <ul className="mb-2">
+                    {(nlpResult.topKeywords || []).slice(0, 8).map((k) => (
+                      <li key={k.term}>
+                        {k.term} ({k.count})
+                      </li>
+                    ))}
+                  </ul>
+                  {(nlpResult.topBigrams || []).length > 0 ? (
+                    <div className="mb-2">
+                      <p className="text-body-secondary mb-1">Top phrases (bigrams)</p>
+                      <ul className="mb-0">
+                        {(nlpResult.topBigrams || []).slice(0, 6).map((b) => (
+                          <li key={b.phrase}>
+                            {b.phrase} ({b.count})
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {nlpResult.structure ? (
+                    <p className="text-body-secondary mb-2">
+                      Lines: {nlpResult.structure.lineCount}, bullet-style lines: {nlpResult.structure.bulletLineCount}
+                    </p>
+                  ) : null}
+                  <p className="text-body-secondary mb-1">Taxonomy matches</p>
+                  <ul className="mb-0">
+                    {(nlpResult.taxonomyMatches || []).map((m) => (
+                      <li key={m.skillId}>
+                        {m.skillName}
+                        {m.match ? (
+                          <span className="text-body-secondary">
+                            {' '}
+                            · {m.match}
+                            {typeof m.score === 'number' ? ` (${m.score})` : ''}
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </RoleCard>
+          </div>
         </div>
+      )}
+
+      {tab === 'succession' && (
+        <RoleCard title="Succession &amp; talent pipeline" iconClass="bi-diagram-2">
+          <p className="small text-body-secondary mb-3">
+            Top employees per job role by readiness (green / required skills). Expand with calibration sessions and HRIS data in
+            production.
+          </p>
+          {(succession || []).map((block) => (
+            <div key={block.jobRoleId} className="mb-4">
+              <h3 className="h6">{block.jobRoleName}</h3>
+              {(block.candidates || []).length === 0 ? (
+                <p className="small text-body-secondary">No active employees in this role.</p>
+              ) : (
+                <div className="table-responsive">
+                  <table className="table table-sm">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Readiness</th>
+                        <th>Critical gaps</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {block.candidates.map((c) => (
+                        <tr key={c.employeeId}>
+                          <td>{c.name}</td>
+                          <td>{c.readinessPct}%</td>
+                          <td>{c.criticalGaps}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))}
+        </RoleCard>
       )}
 
       {tab === 'training' && (
@@ -450,6 +676,24 @@ export default function HrDashboard() {
                       ))}
                     </select>
                   </div>
+                  <div className="col-md-6">
+                    <label className="form-label">Provider (optional)</label>
+                    <input
+                      className="form-control"
+                      value={tpProvider}
+                      onChange={(e) => setTpProvider(e.target.value)}
+                      placeholder="e.g. Udemy Business"
+                    />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label">Delivery format</label>
+                    <select className="form-select" value={tpFormat} onChange={(e) => setTpFormat(e.target.value)}>
+                      <option value="ONLINE">Online</option>
+                      <option value="IN_PERSON">In person</option>
+                      <option value="HYBRID">Hybrid</option>
+                      <option value="CERTIFICATION">Certification</option>
+                    </select>
+                  </div>
                 </div>
                 <button className="btn btn-primary mt-3" type="submit" disabled={busy}>
                   Create program
@@ -465,6 +709,8 @@ export default function HrDashboard() {
                     <th>Title</th>
                     <th>Skill</th>
                     <th>Target</th>
+                    <th>Provider</th>
+                    <th>Format</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -476,6 +722,8 @@ export default function HrDashboard() {
                       </td>
                       <td>{p.skillId}</td>
                       <td>{p.targetLevel}</td>
+                      <td className="small">{p.provider || '—'}</td>
+                      <td className="small">{p.deliveryFormat || 'ONLINE'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -493,16 +741,14 @@ export default function HrDashboard() {
                 <div className="col-12">
                   <label className="form-label">Employee</label>
                   <select className="form-select" value={asEmp} onChange={(e) => setAsEmp(e.target.value)}>
-                    {employees.filter((u) => u.role === 'EMPLOYEE').length === 0 ? (
+                    {employees.length === 0 ? (
                       <option value="">No employees yet</option>
                     ) : (
-                      employees
-                        .filter((u) => u.role === 'EMPLOYEE')
-                        .map((e) => (
-                          <option key={e.id} value={e.id}>
-                            {e.name}
-                          </option>
-                        ))
+                      employees.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.name}
+                        </option>
+                      ))
                     )}
                   </select>
                 </div>

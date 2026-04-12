@@ -4,6 +4,13 @@ import { api } from '../../api.js'
 import { BRAND_TITLE } from '../../content/branding.js'
 import { useTheme } from '../../context/ThemeContext.jsx'
 import { ADMIN_TAB_ITEMS, adminTabLabel, parseAdminTab } from '../../pages/admin/adminNavConfig.js'
+import {
+  EMPLOYEE_SIDEBAR_ITEMS,
+  HR_SIDEBAR_ITEMS,
+  MANAGER_SIDEBAR_ITEMS,
+  hrTabLabel,
+  parseHrTab
+} from '../../pages/dashboard/dashboardNavConfig.js'
 
 function activityLinkTo(item) {
   if (item.hash) return `${item.path}#${item.hash}`
@@ -18,6 +25,7 @@ const NAV_BY_ROLE = {
   EMPLOYEE: { to: '/employee', label: 'Workspace', icon: 'bi-speedometer2' },
   MANAGER: { to: '/manager', label: 'Team command', icon: 'bi-people-fill' },
   HR: { to: '/hr', label: 'HR hub', icon: 'bi-briefcase-fill' },
+  EXECUTIVE: { to: '/executive', label: 'Executive', icon: 'bi-graph-up' },
   ADMIN: { to: '/admin', label: 'Administration', icon: 'bi-shield-fill-check' }
 }
 
@@ -25,18 +33,39 @@ const PAGE_TITLE = {
   '/employee': 'Workspace',
   '/manager': 'Team command',
   '/hr': 'HR hub',
+  '/executive': 'Executive',
   '/admin': 'Administration'
 }
 
+const ROLE_LABELS = {
+  EMPLOYEE: 'Employee',
+  MANAGER: 'Manager',
+  HR: 'HR',
+  EXECUTIVE: 'Executive',
+  ADMIN: 'Administrator'
+}
+
+function hashSidebarLinkActive(path, itemHash, currentHash) {
+  const h = (currentHash || '').replace(/^#/, '')
+  if (!itemHash) return path && (h === '' || h === undefined)
+  return h === itemHash
+}
+
 export default function DashboardLayout({ me, onLogout, children }) {
-  const { pathname, search } = useLocation()
+  const { pathname, search, hash } = useLocation()
   const { theme, toggleTheme } = useTheme()
   const nav = NAV_BY_ROLE[me?.role] || NAV_BY_ROLE.EMPLOYEE
   const adminTab = me?.role === 'ADMIN' && pathname === '/admin' ? parseAdminTab(search) : null
+  const hrTab = me?.role === 'HR' && pathname === '/hr' ? parseHrTab(search) : null
   const title = PAGE_TITLE[pathname] || 'Dashboard'
-  const pageTitle = adminTab != null ? `${PAGE_TITLE['/admin']} — ${adminTabLabel(adminTab)}` : title
+  const pageTitle =
+    adminTab != null
+      ? `${PAGE_TITLE['/admin']} — ${adminTabLabel(adminTab)}`
+      : hrTab != null
+        ? `${PAGE_TITLE['/hr']} — ${hrTabLabel(hrTab)}`
+        : title
   const initial = (me?.name || 'U').trim().charAt(0).toUpperCase()
-  const roleLabel = me?.role ? me.role.charAt(0) + me.role.slice(1).toLowerCase() : ''
+  const roleLabel = (me?.role && ROLE_LABELS[me.role]) || (me?.role ? me.role.charAt(0) + me.role.slice(1).toLowerCase() : '')
 
   const [activity, setActivity] = useState({ badgeCount: 0, items: [] })
 
@@ -237,26 +266,104 @@ export default function DashboardLayout({ me, onLogout, children }) {
                   </p>
                 </a>
                 <ul className="nav nav-treeview">
-                  {me?.role === 'ADMIN'
-                    ? ADMIN_TAB_ITEMS.map((item) => (
-                        <li className="nav-item" key={item.id}>
+                  {me?.role === 'ADMIN' &&
+                    ADMIN_TAB_ITEMS.map((item) => (
+                      <li className="nav-item" key={item.id}>
+                        <Link
+                          to={`/admin?tab=${item.id}`}
+                          className={`nav-link d-flex align-items-center ${adminTab === item.id ? 'active' : ''}`}
+                        >
+                          <i className={`nav-icon bi ${item.icon}`} />
+                          <p className="mb-0">{item.label}</p>
+                        </Link>
+                      </li>
+                    ))}
+                  {me?.role === 'HR' &&
+                    HR_SIDEBAR_ITEMS.map((item) => (
+                      <li className="nav-item" key={item.id}>
+                        <Link
+                          to={item.id === 'overview' ? '/hr' : `/hr?tab=${item.id}`}
+                          className={`nav-link d-flex align-items-center ${hrTab === item.id ? 'active' : ''}`}
+                        >
+                          <i className={`nav-icon bi ${item.icon}`} />
+                          <p className="mb-0">{item.label}</p>
+                        </Link>
+                      </li>
+                    ))}
+                  {me?.role === 'EMPLOYEE' &&
+                    EMPLOYEE_SIDEBAR_ITEMS.map((item) => (
+                      <li className="nav-item" key={item.id}>
+                        {item.hash === '' ? (
+                          <NavLink
+                            to="/employee"
+                            className={({ isActive }) => `nav-link d-flex align-items-center ${isActive ? 'active' : ''}`}
+                            isActive={(_, loc) =>
+                              loc.pathname === '/employee' && !(loc.hash && loc.hash.length > 1)
+                            }
+                          >
+                            <i className={`nav-icon bi ${item.icon}`} />
+                            <p className="mb-0">{item.label}</p>
+                          </NavLink>
+                        ) : (
                           <Link
-                            to={`/admin?tab=${item.id}`}
-                            className={`nav-link d-flex align-items-center ${adminTab === item.id ? 'active' : ''}`}
+                            to={`/employee#${item.hash}`}
+                            className={`nav-link d-flex align-items-center ${
+                              hashSidebarLinkActive(true, item.hash, hash) ? 'active' : ''
+                            }`}
                           >
                             <i className={`nav-icon bi ${item.icon}`} />
                             <p className="mb-0">{item.label}</p>
                           </Link>
-                        </li>
-                      ))
-                    : (
-                        <li className="nav-item">
-                          <NavLink to={nav.to} end className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                            <i className="nav-icon bi bi-circle" />
-                            <p>{nav.label}</p>
+                        )}
+                      </li>
+                    ))}
+                  {me?.role === 'MANAGER' &&
+                    MANAGER_SIDEBAR_ITEMS.map((item) => (
+                      <li className="nav-item" key={item.id}>
+                        {item.hash === '' ? (
+                          <NavLink
+                            to="/manager"
+                            className={({ isActive }) => `nav-link d-flex align-items-center ${isActive ? 'active' : ''}`}
+                            isActive={(_, loc) =>
+                              loc.pathname === '/manager' && !(loc.hash && loc.hash.length > 1)
+                            }
+                          >
+                            <i className={`nav-icon bi ${item.icon}`} />
+                            <p className="mb-0">{item.label}</p>
                           </NavLink>
-                        </li>
-                      )}
+                        ) : (
+                          <Link
+                            to={`/manager#${item.hash}`}
+                            className={`nav-link d-flex align-items-center ${
+                              hashSidebarLinkActive(true, item.hash, hash) ? 'active' : ''
+                            }`}
+                          >
+                            <i className={`nav-icon bi ${item.icon}`} />
+                            <p className="mb-0">{item.label}</p>
+                          </Link>
+                        )}
+                      </li>
+                    ))}
+                  {me?.role === 'EXECUTIVE' && (
+                    <li className="nav-item">
+                      <NavLink
+                        to="/executive"
+                        end
+                        className={({ isActive }) => `nav-link d-flex align-items-center ${isActive ? 'active' : ''}`}
+                      >
+                        <i className="nav-icon bi bi-graph-up" />
+                        <p className="mb-0">Overview</p>
+                      </NavLink>
+                    </li>
+                  )}
+                  {me?.role && !['ADMIN', 'HR', 'EMPLOYEE', 'MANAGER', 'EXECUTIVE'].includes(me.role) && (
+                    <li className="nav-item">
+                      <NavLink to={nav.to} end className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                        <i className="nav-icon bi bi-circle" />
+                        <p>{nav.label}</p>
+                      </NavLink>
+                    </li>
+                  )}
                 </ul>
               </li>
             </ul>
@@ -287,6 +394,17 @@ export default function DashboardLayout({ me, onLogout, children }) {
                       </li>
                       <li className="breadcrumb-item active" aria-current="page">
                         {adminTabLabel(adminTab)}
+                      </li>
+                    </>
+                  ) : hrTab != null && hrTab !== 'overview' ? (
+                    <>
+                      <li className="breadcrumb-item">
+                        <Link to="/hr" className="text-decoration-none">
+                          {PAGE_TITLE['/hr']}
+                        </Link>
+                      </li>
+                      <li className="breadcrumb-item active" aria-current="page">
+                        {hrTabLabel(hrTab)}
                       </li>
                     </>
                   ) : (

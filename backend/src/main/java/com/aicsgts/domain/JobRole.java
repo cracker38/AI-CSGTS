@@ -1,9 +1,11 @@
 package com.aicsgts.domain;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
@@ -17,6 +19,10 @@ public class JobRole {
   private Long id;
 
   private String name;
+
+  @Lob
+  @Column(columnDefinition = "LONGTEXT")
+  private String descriptionText;
 
   private Instant createdAt = Instant.now();
 
@@ -34,6 +40,14 @@ public class JobRole {
 
   public void setName(String name) {
     this.name = name;
+  }
+
+  public String getDescriptionText() {
+    return descriptionText;
+  }
+
+  public void setDescriptionText(String descriptionText) {
+    this.descriptionText = descriptionText;
   }
 
   public Instant getCreatedAt() {

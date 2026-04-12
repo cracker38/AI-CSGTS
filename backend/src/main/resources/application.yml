@@ -24,6 +24,16 @@ spring:
       max-request-size: 5MB
 
 app:
+  upload:
+    dir: ${APP_UPLOAD_DIR:${user.dir}/ai-csgts-uploads}
+  # Optional OpenAI-compatible API (OpenAI, Azure OpenAI passthrough, Ollama with /v1, etc.).
+  # When openai-api-key is non-blank and force-disabled is false, HR job-description NLP and employee AI insights call the model and fall back to heuristics on any error.
+  ai:
+    openai-base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+    openai-api-key: ${OPENAI_API_KEY:}
+    model: ${OPENAI_MODEL:gpt-4o-mini}
+    timeout-seconds: 60
+    force-disabled: false
   cors:
     allowed-origins: "http://localhost:5173,http://localhost:3000"
   jwt:

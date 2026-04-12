@@ -1,5 +1,6 @@
 package com.aicsgts.domain;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -20,6 +21,10 @@ public class Skill {
 
   private String name;
 
+  /** Optional grouping (e.g. SFIA-style category label) for filters and reporting. */
+  @Column(length = 128)
+  private String category;
+
   private Instant createdAt = Instant.now();
 
   public Long getId() {
@@ -36,6 +41,14 @@ public class Skill {
 
   public void setName(String name) {
     this.name = name;
+  }
+
+  public String getCategory() {
+    return category;
+  }
+
+  public void setCategory(String category) {
+    this.category = category;
   }
 
   public Instant getCreatedAt() {

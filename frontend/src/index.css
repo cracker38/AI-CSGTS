@@ -7,3 +7,32 @@
     @apply antialiased;
   }
 }
+
+/* Session gate (before AdminLTE/Bootstrap load) — must not rely on Bootstrap */
+@keyframes app-session-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.app-session-gate {
+  min-height: 45vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: #64748b;
+  font-size: 0.95rem;
+}
+
+.app-session-gate__spinner {
+  width: 2.25rem;
+  height: 2.25rem;
+  margin-bottom: 1rem;
+  border: 3px solid #e2e8f0;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: app-session-spin 0.75s linear infinite;
+}

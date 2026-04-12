@@ -15,6 +15,7 @@ public class SkillGapService {
   public record SkillGapItem(
       Long skillId,
       String skillName,
+      String skillCategory,
       SkillLevel requiredLevel,
       SkillLevel currentLevel,
       int gapRank,
@@ -45,14 +46,16 @@ public class SkillGapService {
 
     for (RequiredSkill req : requiredSkills) {
       SkillLevel required = req.getRequiredLevel();
-      EmployeeSkill cur = bySkillId.get(req.getSkill().getId());
+      Skill sk = req.getSkill();
+      EmployeeSkill cur = bySkillId.get(sk.getId());
 
       if (cur == null) {
         // Missing skill => worst gap.
         int gapRank = required.rank() + 1;
         gaps.add(new SkillGapItem(
-            req.getSkill().getId(),
-            req.getSkill().getName(),
+            sk.getId(),
+            sk.getName(),
+            sk.getCategory(),
             required,
             SkillLevel.BEGINNER,
             gapRank,
@@ -82,8 +85,9 @@ public class SkillGapService {
       }
 
       gaps.add(new SkillGapItem(
-          req.getSkill().getId(),
-          req.getSkill().getName(),
+          sk.getId(),
+          sk.getName(),
+          sk.getCategory(),
           required,
           current,
           gapRank,

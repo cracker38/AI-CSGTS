@@ -8,6 +8,7 @@ import com.aicsgts.domain.RolePermission;
 import com.aicsgts.domain.JobRole;
 import com.aicsgts.domain.Skill;
 import com.aicsgts.domain.RequiredSkill;
+import com.aicsgts.domain.TrainingDeliveryFormat;
 import com.aicsgts.domain.TrainingProgram;
 import com.aicsgts.repo.AppUserRepository;
 import com.aicsgts.repo.DepartmentRepository;
@@ -21,6 +22,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -30,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 
 @SpringBootApplication
+@EnableScheduling
 public class AiCsgtsApplication {
 
   public static void main(String[] args) {
@@ -70,6 +73,7 @@ public class AiCsgtsApplication {
           "HR_SKILL_TAXONOMY",
           "HR_TRAINING_MANAGEMENT"
       ));
+      roleToPerms.put(Role.EXECUTIVE, List.of("EXECUTIVE_DASHBOARD"));
 
       // Admin gets everything.
       List<String> all = new java.util.ArrayList<>();
@@ -126,14 +130,17 @@ public class AiCsgtsApplication {
 
         Skill java = new Skill();
         java.setName("Java");
+        java.setCategory("Development");
         skills.save(java);
 
         Skill react = new Skill();
         react.setName("React");
+        react.setCategory("Development");
         skills.save(react);
 
         Skill mysql = new Skill();
         mysql.setName("MySQL");
+        mysql.setCategory("Data & platforms");
         skills.save(mysql);
 
         RequiredSkill rs1 = new RequiredSkill();
@@ -159,6 +166,8 @@ public class AiCsgtsApplication {
         t1.setDescription("Deep dive into advanced Java topics for production readiness.");
         t1.setSkill(java);
         t1.setTargetLevel(com.aicsgts.domain.SkillLevel.ADVANCED);
+        t1.setProvider("Internal L&D");
+        t1.setDeliveryFormat(TrainingDeliveryFormat.IN_PERSON);
         trainingPrograms.save(t1);
 
         TrainingProgram t2 = new TrainingProgram();
@@ -166,6 +175,8 @@ public class AiCsgtsApplication {
         t2.setDescription("Build real UI features with React best practices.");
         t2.setSkill(react);
         t2.setTargetLevel(com.aicsgts.domain.SkillLevel.INTERMEDIATE);
+        t2.setProvider("Udemy Business");
+        t2.setDeliveryFormat(TrainingDeliveryFormat.ONLINE);
         trainingPrograms.save(t2);
 
         TrainingProgram t3 = new TrainingProgram();
@@ -173,10 +184,28 @@ public class AiCsgtsApplication {
         t3.setDescription("Query tuning, indexing strategy, and performance fundamentals.");
         t3.setSkill(mysql);
         t3.setTargetLevel(com.aicsgts.domain.SkillLevel.INTERMEDIATE);
+        t3.setProvider("Oracle University");
+        t3.setDeliveryFormat(TrainingDeliveryFormat.CERTIFICATION);
         trainingPrograms.save(t3);
       }
 
-      // 4) Create default admin only if there are no users yet.
+      // 4) Named manager account: must not use the self-service employee role (clarifies org role in UI & JWT).
+      users.findByEmail("shema@gmail.com").ifPresent(u -> {
+        boolean dirty = false;
+        if (u.getRole() != Role.MANAGER) {
+          u.setRole(Role.MANAGER);
+          dirty = true;
+        }
+        if (!"SHEMA Patrick".equals(u.getName())) {
+          u.setName("SHEMA Patrick");
+          dirty = true;
+        }
+        if (dirty) {
+          users.save(u);
+        }
+      });
+
+      // 5) Create default admin only if there are no users yet.
       if (hasUsers) return;
 
       AppUser admin = new AppUser();

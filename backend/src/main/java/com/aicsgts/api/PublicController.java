@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -32,7 +33,19 @@ public class PublicController {
         "jobRoles", jobRoles.findAll().stream().map(r -> Map.of(
             "id", r.getId(),
             "name", r.getName()
-        )).toList()
+        )).toList(),
+        "selfServiceRoles", List.of(
+            Map.of(
+                "id", "MANAGER",
+                "label", "Manager",
+                "summary", "Team readiness, training approvals, and project staffing for your department."
+            ),
+            Map.of(
+                "id", "HR",
+                "label", "Human resources",
+                "summary", "Employee directory, skill taxonomy, training programs, and assignment workflows."
+            )
+        )
     );
   }
 }

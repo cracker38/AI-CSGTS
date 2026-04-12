@@ -17,6 +17,12 @@ public class TrainingProgram {
   @Column(length = 2000)
   private String description;
 
+  private String provider;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "delivery_format")
+  private TrainingDeliveryFormat deliveryFormat = TrainingDeliveryFormat.ONLINE;
+
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "skill_id", nullable = false)
   private Skill skill;
@@ -49,6 +55,22 @@ public class TrainingProgram {
 
   public void setDescription(String description) {
     this.description = description;
+  }
+
+  public String getProvider() {
+    return provider;
+  }
+
+  public void setProvider(String provider) {
+    this.provider = provider;
+  }
+
+  public TrainingDeliveryFormat getDeliveryFormat() {
+    return deliveryFormat;
+  }
+
+  public void setDeliveryFormat(TrainingDeliveryFormat deliveryFormat) {
+    this.deliveryFormat = deliveryFormat;
   }
 
   public Skill getSkill() {

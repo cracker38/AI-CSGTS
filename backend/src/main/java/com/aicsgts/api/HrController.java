@@ -3,18 +3,25 @@ package com.aicsgts.api;
 import com.aicsgts.domain.*;
 import com.aicsgts.repo.*;
 import com.aicsgts.service.AuditService;
+import com.aicsgts.service.JobDescriptionNlpService;
+import com.aicsgts.service.SkillGapService;
+import jakarta.annotation.Nullable;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/hr")
@@ -29,6 +36,8 @@ public class HrController {
   private final DepartmentRepository departments;
   private final AuditService audit;
   private final com.aicsgts.repo.SystemConfigRepository systemConfig;
+  private final JobDescriptionNlpService jobDescriptionNlp;
+  private final SkillGapService skillGapService;
 
   public HrController(
       AppUserRepository users,
@@ -39,7 +48,9 @@ public class HrController {
       TrainingAssignmentRepository trainingAssignments,
       DepartmentRepository departments,
       AuditService audit,
-      com.aicsgts.repo.SystemConfigRepository systemConfig
+      com.aicsgts.repo.SystemConfigRepository systemConfig,
+      JobDescriptionNlpService jobDescriptionNlp,
+      SkillGapService skillGapService
   ) {
     this.users = users;
     this.skills = skills;
@@ -50,22 +61,33 @@ public class HrController {
     this.departments = departments;
     this.audit = audit;
     this.systemConfig = systemConfig;
+    this.jobDescriptionNlp = jobDescriptionNlp;
+    this.skillGapService = skillGapService;
   }
 
   @GetMapping("/stats")
   @PreAuthorize("hasAuthority('HR_EMPLOYEES')")
   @Transactional(readOnly = true)
   public Map<String, Object> organizationStats() {
-    List<AppUser> all = users.findAll();
-    long active = all.stream().filter(AppUser::isActive).count();
+    List<AppUser> employeesOnly = users.findByRoleOrderByNameAsc(Role.EMPLOYEE);
+    long active = employeesOnly.stream().filter(AppUser::isActive).count();
     long programs = trainingPrograms.count();
     long skillCount = skills.count();
     List<TrainingAssignment> tas = trainingAssignments.findAll();
-    long pending = tas.stream().filter(ta -> ta.getStatus() == TrainingAssignment.Status.REQUESTED).count();
-    long approved = tas.stream().filter(ta -> ta.getStatus() == TrainingAssignment.Status.APPROVED).count();
-    long completed = tas.stream().filter(ta -> ta.getStatus() == TrainingAssignment.Status.COMPLETED).count();
+    long pending = tas.stream()
+        .filter(ta -> ta.getEmployee().getRole() == Role.EMPLOYEE)
+        .filter(ta -> ta.getStatus() == TrainingAssignment.Status.REQUESTED)
+        .count();
+    long approved = tas.stream()
+        .filter(ta -> ta.getEmployee().getRole() == Role.EMPLOYEE)
+        .filter(ta -> ta.getStatus() == TrainingAssignment.Status.APPROVED)
+        .count();
+    long completed = tas.stream()
+        .filter(ta -> ta.getEmployee().getRole() == Role.EMPLOYEE)
+        .filter(ta -> ta.getStatus() == TrainingAssignment.Status.COMPLETED)
+        .count();
     Map<String, Object> m = new LinkedHashMap<>();
-    m.put("totalUsers", all.size());
+    m.put("totalUsers", employeesOnly.size());
     m.put("activeUsers", active);
     m.put("trainingPrograms", programs);
     m.put("skillsInTaxonomy", skillCount);
@@ -79,7 +101,7 @@ public class HrController {
   @PreAuthorize("hasAuthority('HR_EMPLOYEES')")
   @Transactional(readOnly = true)
   public List<?> employees() {
-    return users.findAll().stream().map(u -> Map.of(
+    return users.findByRoleOrderByNameAsc(Role.EMPLOYEE).stream().map(u -> Map.of(
         "id", u.getId(),
         "name", u.getName(),
         "email", u.getEmail(),
@@ -94,6 +116,9 @@ public class HrController {
   @PreAuthorize("hasAuthority('HR_EMPLOYEES')")
   public Map<String, Object> setActive(@PathVariable("id") Long id, @Valid @RequestBody SetActiveRequest req) {
     AppUser u = users.findById(id).orElseThrow(() -> new IllegalArgumentException("User not found"));
+    if (u.getRole() != Role.EMPLOYEE) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "HR_EMPLOYEES_ONLY");
+    }
     u.setActive(req.active());
     users.save(u);
     audit.log("HR_SET_USER_ACTIVE", "userId=" + id + ", active=" + req.active());
@@ -105,6 +130,9 @@ public class HrController {
   public Map<String, Object> createSkill(@Valid @RequestBody SkillRequest req) {
     Skill s = new Skill();
     s.setName(req.name());
+    if (req.category() != null && !req.category().isBlank()) {
+      s.setCategory(req.category().trim());
+    }
     skills.save(s);
     audit.log("HR_CREATE_SKILL", "skill=" + req.name());
     return Map.of("status", "CREATED", "skillId", s.getId());
@@ -114,10 +142,13 @@ public class HrController {
   @PreAuthorize("hasAuthority('HR_SKILL_TAXONOMY')")
   @Transactional(readOnly = true)
   public List<?> listSkills() {
-    return skills.findAll().stream().map(s -> Map.of(
-        "id", s.getId(),
-        "name", s.getName()
-    )).toList();
+    return skills.findAll().stream().map(s -> {
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("id", s.getId());
+      row.put("name", s.getName());
+      row.put("category", s.getCategory() == null ? "" : s.getCategory());
+      return row;
+    }).toList();
   }
 
   @PostMapping("/job-roles")
@@ -134,10 +165,79 @@ public class HrController {
   @PreAuthorize("hasAuthority('HR_SKILL_TAXONOMY')")
   @Transactional(readOnly = true)
   public List<?> listJobRoles() {
-    return jobRoles.findAll().stream().map(r -> Map.of(
-        "id", r.getId(),
-        "name", r.getName()
-    )).toList();
+    return jobRoles.findAll().stream().map(r -> {
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("id", r.getId());
+      row.put("name", r.getName());
+      String d = r.getDescriptionText();
+      row.put("hasDescription", d != null && !d.isBlank());
+      row.put("descriptionPreview", d == null ? "" : (d.length() > 160 ? d.substring(0, 160) + "…" : d));
+      return row;
+    }).toList();
+  }
+
+  @GetMapping("/job-roles/{jobRoleId}")
+  @PreAuthorize("hasAuthority('HR_SKILL_TAXONOMY')")
+  @Transactional(readOnly = true)
+  public Map<String, Object> getJobRole(@PathVariable("jobRoleId") Long jobRoleId) {
+    JobRole jr = jobRoles.findById(jobRoleId).orElseThrow(() -> new IllegalArgumentException("Invalid jobRoleId"));
+    Map<String, Object> row = new LinkedHashMap<>();
+    row.put("id", jr.getId());
+    row.put("name", jr.getName());
+    row.put("descriptionText", jr.getDescriptionText() == null ? "" : jr.getDescriptionText());
+    return row;
+  }
+
+  @PatchMapping("/job-roles/{jobRoleId}/description")
+  @PreAuthorize("hasAuthority('HR_SKILL_TAXONOMY')")
+  @Transactional
+  public Map<String, Object> patchJobRoleDescription(
+      @PathVariable("jobRoleId") Long jobRoleId,
+      @Valid @RequestBody JobDescriptionPatchRequest req
+  ) {
+    JobRole jr = jobRoles.findById(jobRoleId).orElseThrow(() -> new IllegalArgumentException("Invalid jobRoleId"));
+    jr.setDescriptionText(req.descriptionText() == null || req.descriptionText().isBlank() ? null : req.descriptionText().trim());
+    jobRoles.save(jr);
+    audit.log("HR_JOB_ROLE_DESCRIPTION", "jobRoleId=" + jobRoleId);
+    return Map.of("status", "UPDATED");
+  }
+
+  @PostMapping("/nlp/job-description")
+  @PreAuthorize("hasAuthority('HR_SKILL_TAXONOMY')")
+  public Map<String, Object> analyzeJobText(@Valid @RequestBody JobTextRequest req) {
+    return jobDescriptionNlp.analyze(req.text());
+  }
+
+  @GetMapping("/succession")
+  @PreAuthorize("hasAuthority('HR_EMPLOYEES')")
+  @Transactional(readOnly = true)
+  public List<?> successionPipeline() {
+    List<Map<String, Object>> out = new ArrayList<>();
+    for (JobRole jr : jobRoles.findAll()) {
+      List<AppUser> pool = users.findByRoleAndJobRole_IdOrderByNameAsc(Role.EMPLOYEE, jr.getId());
+      List<Map<String, Object>> candidates = pool.stream()
+          .filter(AppUser::isActive)
+          .map(u -> {
+            var g = skillGapService.computeForEmployee(u);
+            int total = g.greenCount() + g.yellowCount() + g.orangeCount() + g.redCount();
+            int readinessPct = total == 0 ? 100 : (int) Math.round(100.0 * g.greenCount() / total);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("employeeId", u.getId());
+            row.put("name", u.getName());
+            row.put("readinessPct", readinessPct);
+            row.put("criticalGaps", g.redCount());
+            return row;
+          })
+          .sorted(Comparator.comparingInt((Map<String, Object> m) -> (Integer) m.get("readinessPct")).reversed())
+          .limit(5)
+          .toList();
+      Map<String, Object> block = new LinkedHashMap<>();
+      block.put("jobRoleId", jr.getId());
+      block.put("jobRoleName", jr.getName());
+      block.put("candidates", candidates);
+      out.add(block);
+    }
+    return out;
   }
 
   @PostMapping("/job-roles/{jobRoleId}/required-skills")
@@ -179,6 +279,8 @@ public class HrController {
     tp.setDescription(req.description());
     tp.setSkill(skill);
     tp.setTargetLevel(req.targetLevel());
+    tp.setProvider(req.provider() == null || req.provider().isBlank() ? null : req.provider().trim());
+    tp.setDeliveryFormat(req.deliveryFormat() == null ? TrainingDeliveryFormat.ONLINE : req.deliveryFormat());
     trainingPrograms.save(tp);
     audit.log("HR_CREATE_TRAINING_PROGRAM", "title=" + req.title());
     return Map.of("status", "CREATED", "programId", tp.getId());
@@ -188,13 +290,20 @@ public class HrController {
   @PreAuthorize("hasAuthority('HR_TRAINING_MANAGEMENT')")
   @Transactional(readOnly = true)
   public List<?> trainingPrograms() {
-    return trainingPrograms.findAll().stream().map(tp -> Map.of(
-        "id", tp.getId(),
-        "title", tp.getTitle(),
-        "description", tp.getDescription(),
-        "skillId", tp.getSkill().getId(),
-        "targetLevel", tp.getTargetLevel()
-    )).toList();
+    return trainingPrograms.findAll().stream().map(tp -> {
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("id", tp.getId());
+      row.put("title", tp.getTitle());
+      row.put("description", tp.getDescription());
+      row.put("skillId", tp.getSkill().getId());
+      row.put("targetLevel", tp.getTargetLevel());
+      row.put("provider", tp.getProvider() == null ? "" : tp.getProvider());
+      row.put(
+          "deliveryFormat",
+          tp.getDeliveryFormat() == null ? TrainingDeliveryFormat.ONLINE.name() : tp.getDeliveryFormat().name()
+      );
+      return row;
+    }).toList();
   }
 
   @GetMapping("/training-assignments")
@@ -202,6 +311,7 @@ public class HrController {
   @Transactional(readOnly = true)
   public List<?> listTrainingAssignments() {
     return trainingAssignments.findAll().stream()
+        .filter(ta -> ta.getEmployee().getRole() == Role.EMPLOYEE)
         .sorted((a, b) -> b.getRequestedAt().compareTo(a.getRequestedAt()))
         .map(ta -> {
           Map<String, Object> row = new LinkedHashMap<>();
@@ -222,6 +332,9 @@ public class HrController {
   @PreAuthorize("hasAuthority('HR_TRAINING_MANAGEMENT')")
   public Map<String, Object> assignTraining(@Valid @RequestBody TrainingAssignmentRequest req) {
     AppUser employee = users.findById(req.employeeId()).orElseThrow(() -> new IllegalArgumentException("Invalid employeeId"));
+    if (employee.getRole() != Role.EMPLOYEE) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "TRAINING_ASSIGNEE_MUST_BE_EMPLOYEE");
+    }
     TrainingProgram program = trainingPrograms.findById(req.programId()).orElseThrow(() -> new IllegalArgumentException("Invalid programId"));
 
     TrainingAssignment ta = new TrainingAssignment();
@@ -262,7 +375,7 @@ public class HrController {
   public record SetActiveRequest(@NotNull Boolean active) {
   }
 
-  public record SkillRequest(@NotBlank String name) {
+  public record SkillRequest(@NotBlank String name, @Nullable String category) {
   }
 
   public record JobRoleRequest(@NotBlank String name) {
@@ -278,7 +391,9 @@ public class HrController {
       @NotBlank String title,
       String description,
       @NotNull Long skillId,
-      @NotNull SkillLevel targetLevel
+      @NotNull SkillLevel targetLevel,
+      @Nullable String provider,
+      @Nullable TrainingDeliveryFormat deliveryFormat
   ) {
   }
 
@@ -289,6 +404,12 @@ public class HrController {
   }
 
   public record ReviewRequest(String note) {
+  }
+
+  public record JobDescriptionPatchRequest(@Nullable String descriptionText) {
+  }
+
+  public record JobTextRequest(@NotBlank String text) {
   }
 }
 

@@ -1,24 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
-import {
-  auditToCsv,
-  debounce,
-  downloadTextFile,
-  formatInstant,
-  usersToCsv
-} from './admin/adminHelpers.js'
+import { auditToCsv, debounce, downloadBlob, downloadTextFile, usersToCsv } from './admin/adminHelpers.js'
 import { parseAdminTab } from './admin/adminNavConfig.js'
-import { RoleAlerts, RoleCard, RoleLoading, RoleTable, SmallBoxKpi } from './dashboard/dashboardRoleUi.jsx'
-
-const ADMIN_CREATE_ROLES = ['MANAGER', 'HR', 'ADMIN']
-const ALL_ROLES = ['EMPLOYEE', 'MANAGER', 'HR', 'ADMIN']
+import { ALL_ROLES } from './admin/adminConstants.js'
+import AdminOverview from './admin/AdminOverview.jsx'
+import AdminUsers from './admin/AdminUsers.jsx'
+import AdminDepartments from './admin/AdminDepartments.jsx'
+import AdminSystem from './admin/AdminSystem.jsx'
+import AdminAudit from './admin/AdminAudit.jsx'
+import AdminLoginHistory from './admin/AdminLoginHistory.jsx'
+import AdminPermissions from './admin/AdminPermissions.jsx'
+import { RoleAlerts, RoleLoading } from './dashboard/dashboardRoleUi.jsx'
 
 function permissionGroup(code) {
   if (!code) return 'Other'
   if (code.startsWith('ADMIN_')) return 'Administration'
   if (code.startsWith('HR_')) return 'HR'
   if (code.startsWith('MANAGER_') || code.startsWith('MGR_')) return 'Manager'
+  if (code.startsWith('EXECUTIVE_')) return 'Executive'
   return 'Other'
 }
 
@@ -44,6 +44,9 @@ export default function AdminDashboard() {
   const [me, setMe] = useState(null)
 
   const [gapRank, setGapRank] = useState(2)
+  const [integrationsJson, setIntegrationsJson] = useState('{\n  "ldapEnabled": false,\n  "ldapServerUrl": "",\n  "jiraBaseUrl": "",\n  "asanaWorkspaceId": ""\n}')
+  const [scheduledReportingEnabled, setScheduledReportingEnabled] = useState(false)
+  const [reportingRecipientEmail, setReportingRecipientEmail] = useState('')
   const [cuName, setCuName] = useState('')
   const [cuEmail, setCuEmail] = useState('')
   const [cuPass, setCuPass] = useState('')
@@ -98,6 +101,16 @@ export default function AdminDashboard() {
       setAuditRecent(a.data)
       setJobRoles(reg.data?.jobRoles || [])
       if (c.data?.gapAlertRank != null) setGapRank(c.data.gapAlertRank)
+      if (typeof c.data?.integrationsJson === 'string' && c.data.integrationsJson.trim()) {
+        try {
+          const parsed = JSON.parse(c.data.integrationsJson)
+          setIntegrationsJson(JSON.stringify(parsed, null, 2))
+        } catch {
+          setIntegrationsJson(c.data.integrationsJson)
+        }
+      }
+      if (typeof c.data?.scheduledReportingEnabled === 'boolean') setScheduledReportingEnabled(c.data.scheduledReportingEnabled)
+      if (typeof c.data?.reportingRecipientEmail === 'string') setReportingRecipientEmail(c.data.reportingRecipientEmail)
       if (d.data.length) {
         setCuDept((prev) => prev || String(d.data[0].id))
       }
@@ -210,7 +223,20 @@ export default function AdminDashboard() {
     setMsg('')
     setError('')
     try {
-      await api.patch('/api/admin/config', { gapAlertRank: rank })
+      let integrationsPayload = integrationsJson
+      try {
+        integrationsPayload = JSON.stringify(JSON.parse(integrationsJson))
+      } catch {
+        setError('Integrations must be valid JSON.')
+        setBusy(false)
+        return
+      }
+      await api.patch('/api/admin/config', {
+        gapAlertRank: rank,
+        integrationsJson: integrationsPayload,
+        scheduledReportingEnabled,
+        reportingRecipientEmail: reportingRecipientEmail.trim() || null
+      })
       const c = await api.get('/api/admin/config')
       setConfig(c.data)
       setMsg('Configuration saved.')
@@ -463,34 +489,42 @@ export default function AdminDashboard() {
 
   return (
     <>
-      <div className="card bg-warning bg-gradient text-dark mb-3 shadow-sm">
-        <div className="card-body py-3">
-          <div className="d-flex flex-wrap align-items-center gap-3">
-            <span className="rounded-2 bg-dark bg-opacity-10 px-3 py-2 fw-bold">A</span>
-            <div className="flex-grow-1">
-              <h2 className="h5 mb-1">Administration</h2>
-              <p className="mb-0 small opacity-75">
-                Directory, RBAC, configuration, audit trail, and bulk import/export — centralized control plane.
-              </p>
-              <div className="d-flex flex-wrap gap-1 mt-2">
-                <span className="badge text-bg-dark bg-opacity-25">RBAC</span>
-                <span className="badge text-bg-dark bg-opacity-25">Audit-ready</span>
-                <span className="badge text-bg-dark bg-opacity-25">Import / Export</span>
+      {tab !== 'overview' &&
+        tab !== 'users' &&
+        tab !== 'departments' &&
+        tab !== 'system' &&
+        tab !== 'audit' &&
+        tab !== 'login-history' &&
+        tab !== 'permissions' && (
+        <div className="card bg-warning bg-gradient text-dark mb-3 shadow-sm">
+          <div className="card-body py-3">
+            <div className="d-flex flex-wrap align-items-center gap-3">
+              <span className="rounded-2 bg-dark bg-opacity-10 px-3 py-2 fw-bold">A</span>
+              <div className="flex-grow-1">
+                <h2 className="h5 mb-1">Administration</h2>
+                <p className="mb-0 small opacity-75">
+                  Directory, RBAC, configuration, audit trail, and bulk import/export — centralized control plane.
+                </p>
+                <div className="d-flex flex-wrap gap-1 mt-2">
+                  <span className="badge text-bg-dark bg-opacity-25">RBAC</span>
+                  <span className="badge text-bg-dark bg-opacity-25">Audit-ready</span>
+                  <span className="badge text-bg-dark bg-opacity-25">Import / Export</span>
+                </div>
               </div>
+              <button
+                type="button"
+                className="btn btn-dark btn-sm align-self-start"
+                onClick={() => loadCore()}
+                disabled={loading || busy}
+                title="Reload users, departments, stats, and configuration"
+              >
+                <i className="bi bi-arrow-clockwise me-1" />
+                Refresh data
+              </button>
             </div>
-            <button
-              type="button"
-              className="btn btn-dark btn-sm align-self-start"
-              onClick={() => loadCore()}
-              disabled={loading || busy}
-              title="Reload users, departments, stats, and configuration"
-            >
-              <i className="bi bi-arrow-clockwise me-1" />
-              Refresh data
-            </button>
           </div>
         </div>
-      </div>
+      )}
 
       <RoleAlerts error={error} success={msg} />
 
@@ -499,594 +533,147 @@ export default function AdminDashboard() {
       ) : (
         <>
           {tab === 'overview' && stats && (
-            <div className="mb-4">
-              <div className="row g-3 mb-3">
-                <div className="col-sm-6 col-xl-3">
-                  <SmallBoxKpi value={stats.totalUsers} label="Total users" variant="primary" iconClass="bi-people" />
-                </div>
-                <div className="col-sm-6 col-xl-3">
-                  <SmallBoxKpi value={stats.activeUsers} label="Active accounts" variant="success" iconClass="bi-person-check" />
-                </div>
-                <div className="col-sm-6 col-xl-3">
-                  <SmallBoxKpi value={stats.departmentCount} label="Departments" variant="info" iconClass="bi-building" />
-                </div>
-                <div className="col-sm-6 col-xl-3">
-                  <SmallBoxKpi
-                    value={stats.auditEventsLast24h}
-                    label="Audit (24h)"
-                    variant="warning"
-                    iconClass="bi-clock-history"
-                  />
-                </div>
-              </div>
-
-              <div className="row g-3 mb-3">
-                <div className="col-lg-6">
-                  <RoleCard title="Users by role" iconClass="bi-pie-chart">
-                    <ul className="list-unstyled mb-0">
-                      {roleBars.map(({ role, n, pct }) => (
-                        <li key={role} className="d-flex align-items-center gap-2 mb-3 small">
-                          <span className="text-nowrap fw-semibold" style={{ width: '6.5rem' }}>
-                            {role}
-                          </span>
-                          <div className="progress flex-grow-1" style={{ height: '0.5rem' }}>
-                            <div
-                              className="progress-bar bg-primary"
-                              role="progressbar"
-                              style={{ width: `${pct}%` }}
-                              aria-valuenow={pct}
-                              aria-valuemin={0}
-                              aria-valuemax={100}
-                            />
-                          </div>
-                          <span className="text-end font-monospace text-body-secondary" style={{ width: '2rem' }}>
-                            {n}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </RoleCard>
-                </div>
-                <div className="col-lg-6">
-                  <RoleCard title="Headcount by department" iconClass="bi-building">
-                    <ul className="list-unstyled mb-0">
-                      {deptBars.map(({ id, name, n, pct }) => (
-                        <li key={id} className="d-flex align-items-center gap-2 mb-3 small">
-                          <span className="text-truncate fw-semibold" style={{ maxWidth: '8rem' }}>
-                            {name}
-                          </span>
-                          <div className="progress flex-grow-1" style={{ height: '0.5rem' }}>
-                            <div
-                              className="progress-bar bg-info"
-                              role="progressbar"
-                              style={{ width: `${pct}%` }}
-                              aria-valuenow={pct}
-                              aria-valuemin={0}
-                              aria-valuemax={100}
-                            />
-                          </div>
-                          <span className="text-end font-monospace text-body-secondary" style={{ width: '2rem' }}>
-                            {n}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </RoleCard>
-                </div>
-              </div>
-
-              <RoleCard title="Recent activity" iconClass="bi-lightning-charge">
-                <div className="d-flex flex-column gap-2">
-                  {(auditRecent || []).slice(0, 8).map((row) => (
-                    <div
-                      key={row.id ?? `${row.createdAt}-${row.action}`}
-                      className="d-flex flex-wrap align-items-baseline justify-content-between gap-2 rounded border bg-body-secondary bg-opacity-25 px-3 py-2 small"
-                    >
-                      <span className="font-monospace text-body-secondary">{formatInstant(row.createdAt)}</span>
-                      <span className="fw-bold text-primary">{row.action}</span>
-                      <span className="text-body-secondary">{row.actor?.email || '—'}</span>
-                    </div>
-                  ))}
-                  {!auditRecent?.length && <p className="text-body-secondary mb-0">No audit events recorded yet.</p>}
-                </div>
-              </RoleCard>
-            </div>
+            <AdminOverview
+              stats={stats}
+              roleBars={roleBars}
+              deptBars={deptBars}
+              auditRecent={auditRecent}
+              onRefresh={() => loadCore()}
+              disabled={loading || busy}
+            />
           )}
 
           {tab === 'users' && (
-            <div className="row g-3">
-              <div className="col-xl-4">
-                <RoleCard title="Create user" iconClass="bi-person-plus">
-                  <form onSubmit={createUser} className="d-flex flex-column gap-3">
-                    <div>
-                      <label className="form-label small mb-1">Full name</label>
-                      <input className="form-control form-control-sm" value={cuName} onChange={(e) => setCuName(e.target.value)} required />
-                    </div>
-                    <div>
-                      <label className="form-label small mb-1">Email</label>
-                      <input
-                        type="email"
-                        className="form-control form-control-sm"
-                        value={cuEmail}
-                        onChange={(e) => setCuEmail(e.target.value)}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="form-label small mb-1">Temporary password</label>
-                      <input
-                        type="password"
-                        className="form-control form-control-sm"
-                        value={cuPass}
-                        onChange={(e) => setCuPass(e.target.value)}
-                        required
-                        minLength={8}
-                      />
-                    </div>
-                    <div>
-                      <label className="form-label small mb-1">Role</label>
-                      <select className="form-select form-select-sm" value={cuRole} onChange={(e) => setCuRole(e.target.value)}>
-                        {ADMIN_CREATE_ROLES.map((r) => (
-                          <option key={r} value={r}>
-                            {r}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="form-label small mb-1">Department</label>
-                      <select className="form-select form-select-sm" value={cuDept} onChange={(e) => setCuDept(e.target.value)} required>
-                        {departments.map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="form-label small mb-1">Job role (optional)</label>
-                      <select className="form-select form-select-sm" value={cuJobRole} onChange={(e) => setCuJobRole(e.target.value)}>
-                        <option value="">— None —</option>
-                        {jobRoles.map((r) => (
-                          <option key={r.id} value={r.id}>
-                            {r.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <button className="btn btn-primary w-100" type="submit" disabled={busy}>
-                      Create user
-                    </button>
-                  </form>
-                  <p className="mt-3 mb-0 small text-body-secondary">
-                    Employees must self-register. CSV columns:{' '}
-                    <code className="px-1 rounded bg-body-secondary">name,email,password,role,departmentId,jobRoleId</code>
-                  </p>
-                </RoleCard>
-              </div>
-
-              <div className="col-xl-8">
-                <RoleCard
-                  title="Directory"
-                  iconClass="bi-people"
-                  headerRight={
-                    <div className="d-flex flex-wrap gap-2">
-                      <label className="btn btn-sm btn-outline-secondary mb-0">
-                        <input type="file" accept=".csv,text/csv" className="d-none" onChange={importUsersCsv} disabled={busy} />
-                        Import CSV
-                      </label>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-secondary"
-                        onClick={exportUsersCsv}
-                        disabled={!filteredUsers.length}
-                      >
-                        Export CSV
-                      </button>
-                    </div>
-                  }
-                >
-                  <div className="row g-2 mb-3">
-                    <div className="col-sm-6 col-lg-3">
-                      <input
-                        type="search"
-                        placeholder="Search name or email…"
-                        className="form-control form-control-sm"
-                        value={userSearch}
-                        onChange={(e) => {
-                          setUserSearch(e.target.value)
-                          setUserPage(0)
-                        }}
-                      />
-                    </div>
-                    <div className="col-sm-6 col-lg-3">
-                      <select
-                        className="form-select form-select-sm"
-                        value={userRoleFilter}
-                        onChange={(e) => {
-                          setUserRoleFilter(e.target.value)
-                          setUserPage(0)
-                        }}
-                      >
-                        <option value="">All roles</option>
-                        {ALL_ROLES.map((r) => (
-                          <option key={r} value={r}>
-                            {r}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="col-sm-6 col-lg-3">
-                      <select
-                        className="form-select form-select-sm"
-                        value={userDeptFilter}
-                        onChange={(e) => {
-                          setUserDeptFilter(e.target.value)
-                          setUserPage(0)
-                        }}
-                      >
-                        <option value="">All departments</option>
-                        {departments.map((d) => (
-                          <option key={d.id} value={String(d.id)}>
-                            {d.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="col-sm-6 col-lg-3">
-                      <select
-                        className="form-select form-select-sm"
-                        value={userActiveFilter}
-                        onChange={(e) => {
-                          setUserActiveFilter(e.target.value)
-                          setUserPage(0)
-                        }}
-                      >
-                        <option value="all">Active + inactive</option>
-                        <option value="active">Active only</option>
-                        <option value="inactive">Inactive only</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <RoleTable>
-                    <thead>
-                      <tr>
-                        <th scope="col">
-                          <button type="button" className="btn btn-link btn-sm p-0 fw-bold text-decoration-none" onClick={() => sortHeader('name')}>
-                            Name {userSort.key === 'name' ? (userSort.dir === 'asc' ? '↑' : '↓') : ''}
-                          </button>
-                        </th>
-                        <th scope="col">
-                          <button type="button" className="btn btn-link btn-sm p-0 fw-bold text-decoration-none" onClick={() => sortHeader('email')}>
-                            Email {userSort.key === 'email' ? (userSort.dir === 'asc' ? '↑' : '↓') : ''}
-                          </button>
-                        </th>
-                        <th scope="col">
-                          <button type="button" className="btn btn-link btn-sm p-0 fw-bold text-decoration-none" onClick={() => sortHeader('role')}>
-                            Role {userSort.key === 'role' ? (userSort.dir === 'asc' ? '↑' : '↓') : ''}
-                          </button>
-                        </th>
-                        <th scope="col">Department</th>
-                        <th scope="col">Job role</th>
-                        <th scope="col">Active</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pagedUsers.map((u) => (
-                        <tr key={u.id}>
-                          <td>
-                            <strong>{u.name}</strong>
-                          </td>
-                          <td className="text-body-secondary">{u.email}</td>
-                          <td>
-                            <span className="badge text-bg-secondary">{u.role}</span>
-                          </td>
-                          <td>{deptById.get(u.departmentId) ?? '—'}</td>
-                          <td>{u.jobRoleId != null ? jobRoleById.get(u.jobRoleId) ?? u.jobRoleId : '—'}</td>
-                          <td>
-                            <button
-                              type="button"
-                              className={`btn btn-sm ${u.active ? 'btn-success' : 'btn-outline-secondary'}`}
-                              disabled={busy || (me && u.id === me.id)}
-                              onClick={() => toggleUserActive(u)}
-                              title={me && u.id === me.id ? 'Cannot change your own status here' : 'Toggle active'}
-                            >
-                              {u.active ? 'Active' : 'Inactive'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </RoleTable>
-                  <div className="mt-3 d-flex flex-wrap align-items-center justify-content-between gap-2 small">
-                    <div className="d-flex align-items-center gap-2">
-                      <span className="text-body-secondary">Rows per page</span>
-                      <select
-                        className="form-select form-select-sm"
-                        style={{ width: 'auto' }}
-                        value={userPageSize}
-                        onChange={(e) => {
-                          setUserPageSize(Number(e.target.value))
-                          setUserPage(0)
-                        }}
-                      >
-                        {[10, 25, 50].map((n) => (
-                          <option key={n} value={n}>
-                            {n}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="d-flex align-items-center gap-2">
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-secondary"
-                        disabled={safeUserPage <= 0}
-                        onClick={() => setUserPage((p) => Math.max(0, p - 1))}
-                      >
-                        Previous
-                      </button>
-                      <span className="text-body-secondary">
-                        Page {safeUserPage + 1} / {userTotalPages} · {filteredUsers.length} users
-                      </span>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-secondary"
-                        disabled={safeUserPage >= userTotalPages - 1}
-                        onClick={() => setUserPage((p) => p + 1)}
-                      >
-                        Next
-                      </button>
-                    </div>
-                  </div>
-                </RoleCard>
-              </div>
-            </div>
+            <AdminUsers
+              stats={stats}
+              me={me}
+              busy={busy}
+              departments={departments}
+              jobRoles={jobRoles}
+              deptById={deptById}
+              jobRoleById={jobRoleById}
+              cuName={cuName}
+              setCuName={setCuName}
+              cuEmail={cuEmail}
+              setCuEmail={setCuEmail}
+              cuPass={cuPass}
+              setCuPass={setCuPass}
+              cuRole={cuRole}
+              setCuRole={setCuRole}
+              cuDept={cuDept}
+              setCuDept={setCuDept}
+              cuJobRole={cuJobRole}
+              setCuJobRole={setCuJobRole}
+              onCreateUser={createUser}
+              userSearch={userSearch}
+              setUserSearch={setUserSearch}
+              userRoleFilter={userRoleFilter}
+              setUserRoleFilter={setUserRoleFilter}
+              userDeptFilter={userDeptFilter}
+              setUserDeptFilter={setUserDeptFilter}
+              userActiveFilter={userActiveFilter}
+              setUserActiveFilter={setUserActiveFilter}
+              userSort={userSort}
+              sortHeader={sortHeader}
+              pagedUsers={pagedUsers}
+              filteredUsers={filteredUsers}
+              safeUserPage={safeUserPage}
+              userTotalPages={userTotalPages}
+              setUserPage={setUserPage}
+              userPageSize={userPageSize}
+              setUserPageSize={setUserPageSize}
+              onImportCsv={importUsersCsv}
+              onExportCsv={exportUsersCsv}
+              onToggleActive={toggleUserActive}
+            />
           )}
 
           {tab === 'departments' && (
-            <div className="d-flex flex-column gap-3">
-              <RoleCard title="New department" iconClass="bi-plus-lg">
-                <form onSubmit={createDepartment} className="d-flex flex-wrap gap-2 align-items-end" style={{ maxWidth: '36rem' }}>
-                  <div className="flex-grow-1" style={{ minWidth: '12rem' }}>
-                    <label className="form-label small mb-1">Name</label>
-                    <input
-                      className="form-control form-control-sm"
-                      placeholder="Department name"
-                      value={newDeptName}
-                      onChange={(e) => setNewDeptName(e.target.value)}
-                    />
-                  </div>
-                  <button className="btn btn-primary btn-sm" type="submit" disabled={busy}>
-                    Create
-                  </button>
-                </form>
-              </RoleCard>
-
-              <RoleCard title="All departments" iconClass="bi-building">
-                <div className="row g-3">
-                  {departments.map((d) => (
-                    <div key={d.id} className="col-sm-6 col-lg-4">
-                      <div className="card border h-100 shadow-sm">
-                        <div className="card-body py-3">
-                          <div className="fw-bold">{d.name}</div>
-                          <div className="mt-2 d-flex justify-content-between align-items-center small">
-                            <span className="text-body-secondary">ID {d.id}</span>
-                            <span className="badge text-bg-primary">{deptUserCounts.get(d.id) || 0} users</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </RoleCard>
-            </div>
+            <AdminDepartments
+              stats={stats}
+              departments={departments}
+              deptUserCounts={deptUserCounts}
+              newDeptName={newDeptName}
+              setNewDeptName={setNewDeptName}
+              onCreateDepartment={createDepartment}
+              busy={busy}
+            />
           )}
 
           {tab === 'system' && config && (
-            <div className="row">
-              <div className="col-lg-6 col-xl-5">
-                <RoleCard title="System configuration" iconClass="bi-gear">
-                  <form onSubmit={saveConfig} className="d-flex flex-column gap-3">
-                    <div>
-                      <label className="form-label small mb-1">Skill gap alert threshold (rank)</label>
-                      <input
-                        type="number"
-                        min={0}
-                        max={10}
-                        className="form-control"
-                        value={gapRank}
-                        onChange={(e) => setGapRank(e.target.value)}
-                      />
-                    </div>
-                    <p className="small text-body-secondary mb-0">
-                      When the computed gap rank meets or exceeds this value, training recommendations and alerts prioritize the
-                      skill. Valid range: 0–10.
-                    </p>
-                    <button className="btn btn-primary" type="submit" disabled={busy}>
-                      Save configuration
-                    </button>
-                  </form>
-                </RoleCard>
-              </div>
-            </div>
+            <AdminSystem
+              config={config}
+              gapRank={gapRank}
+              setGapRank={setGapRank}
+              integrationsJson={integrationsJson}
+              setIntegrationsJson={setIntegrationsJson}
+              scheduledReportingEnabled={scheduledReportingEnabled}
+              setScheduledReportingEnabled={setScheduledReportingEnabled}
+              reportingRecipientEmail={reportingRecipientEmail}
+              setReportingRecipientEmail={setReportingRecipientEmail}
+              onSaveConfig={saveConfig}
+              onDownloadPpt={async () => {
+                setBusy(true)
+                setError('')
+                try {
+                  const res = await api.get('/api/admin/reports/skill-health.pptx', { responseType: 'blob' })
+                  downloadBlob('skill-health.pptx', res.data)
+                } catch (e) {
+                  setError(e?.message || 'DOWNLOAD_FAILED')
+                } finally {
+                  setBusy(false)
+                }
+              }}
+              onDownloadCompliancePack={async () => {
+                setBusy(true)
+                setError('')
+                try {
+                  const res = await api.get('/api/admin/audit/compliance-pack.zip', { responseType: 'blob' })
+                  downloadBlob('audit-compliance-pack.zip', res.data)
+                } catch (e) {
+                  setError(e?.message || 'DOWNLOAD_FAILED')
+                } finally {
+                  setBusy(false)
+                }
+              }}
+              busy={busy}
+            />
           )}
 
           {tab === 'audit' && (
-            <RoleCard
-              title="Audit log"
-              iconClass="bi-journal-text"
-              headerRight={
-                <div className="d-flex flex-wrap gap-2 align-items-center">
-                  <input
-                    type="search"
-                    placeholder="Filter by action…"
-                    className="form-control form-control-sm"
-                    style={{ width: '12rem' }}
-                    value={auditQ}
-                    onChange={(e) => setAuditQ(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-outline-secondary"
-                    onClick={exportAuditCsv}
-                    disabled={!auditPageData?.content?.length}
-                  >
-                    Export page CSV
-                  </button>
-                </div>
-              }
-            >
-              {auditLoading ? (
-                <p className="text-body-secondary text-center py-4 mb-0">Loading audit…</p>
-              ) : (
-                <>
-                  <RoleTable>
-                    <thead>
-                      <tr>
-                        <th scope="col">When</th>
-                        <th scope="col">Action</th>
-                        <th scope="col">Actor</th>
-                        <th scope="col">Details</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(auditPageData?.content || []).map((a) => (
-                        <tr key={a.id}>
-                          <td className="text-nowrap font-monospace small">{formatInstant(a.createdAt)}</td>
-                          <td>
-                            <span className="badge text-bg-primary">{a.action}</span>
-                          </td>
-                          <td>{a.actor ? a.actor.email : '—'}</td>
-                          <td className="text-truncate" style={{ maxWidth: '24rem' }} title={a.details}>
-                            {a.details}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </RoleTable>
-                  <div className="mt-3 d-flex flex-wrap align-items-center justify-content-between gap-2 small">
-                    <span className="text-body-secondary">
-                      {auditPageData ? `${auditPageData.totalElements} total events` : ''}
-                    </span>
-                    <div className="d-flex gap-2">
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-secondary"
-                        disabled={auditPage <= 0}
-                        onClick={() => setAuditPage((p) => p - 1)}
-                      >
-                        Previous
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-secondary"
-                        disabled={!auditPageData || auditPage >= (auditPageData.totalPages || 1) - 1}
-                        onClick={() => setAuditPage((p) => p + 1)}
-                      >
-                        Next
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </RoleCard>
+            <AdminAudit
+              auditQ={auditQ}
+              setAuditQ={setAuditQ}
+              auditLoading={auditLoading}
+              auditPageData={auditPageData}
+              auditPage={auditPage}
+              setAuditPage={setAuditPage}
+              onExportCsv={exportAuditCsv}
+            />
           )}
 
-          {tab === 'permissions' && (
-            <div className="d-flex flex-column gap-3">
-              {!rolePerms && !error && (
-                <p className="text-body-secondary text-center py-4 mb-0">Loading permission matrix…</p>
-              )}
-              {rolePerms && (
-                <>
-                  <RoleCard
-                    title="Role permissions"
-                    iconClass="bi-shield-lock"
-                    headerRight={
-                      <div className="d-flex flex-wrap align-items-center gap-2">
-                        <label className="small mb-0 text-nowrap">Role</label>
-                        <select className="form-select form-select-sm" style={{ width: 'auto' }} value={permRole} onChange={(e) => setPermRole(e.target.value)}>
-                          {ALL_ROLES.map((r) => (
-                            <option key={r} value={r}>
-                              {r}
-                            </option>
-                          ))}
-                        </select>
-                        <button type="button" className="btn btn-sm btn-primary" onClick={saveRolePermissions} disabled={busy}>
-                          Save mapping
-                        </button>
-                      </div>
-                    }
-                  >
-                    <p className="small text-body-secondary mb-3">
-                      <strong>{permRole}</strong> currently has <strong>{permSelection.size}</strong> permission(s). Changes replace the entire mapping for
-                      that role.
-                    </p>
-                    <input
-                      type="search"
-                      placeholder="Search permissions…"
-                      className="form-control form-control-sm mb-3"
-                      style={{ maxWidth: '24rem' }}
-                      value={permSearch}
-                      onChange={(e) => setPermSearch(e.target.value)}
-                    />
-                    <div className="overflow-auto pe-1" style={{ maxHeight: '30rem' }}>
-                      {groupedPermissions.map(([group, items]) => (
-                        <div key={group} className="mb-4">
-                          <h3 className="small text-uppercase text-body-secondary fw-bold mb-2">{group}</h3>
-                          <ul className="list-unstyled row g-2 mb-0">
-                            {items.map((p) => (
-                              <li key={p.id} className="col-sm-6">
-                                <div className="d-flex gap-2 align-items-start rounded border p-2 h-100 bg-body-secondary bg-opacity-10">
-                                  <input
-                                    type="checkbox"
-                                    className="form-check-input mt-1 flex-shrink-0"
-                                    checked={permSelection.has(p.code)}
-                                    onChange={(e) => togglePermCode(p.code, e.target.checked)}
-                                    id={`perm-${p.id}`}
-                                  />
-                                  <label htmlFor={`perm-${p.id}`} className="small mb-0 cursor-pointer">
-                                    <span className="font-monospace fw-bold text-primary">{p.code}</span>
-                                    {p.description ? <span className="d-block text-body-secondary mt-1">{p.description}</span> : null}
-                                  </label>
-                                </div>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ))}
-                    </div>
-                  </RoleCard>
+          {tab === 'login-history' && <AdminLoginHistory />}
 
-                  <div className="row">
-                    <div className="col-lg-6 col-xl-5">
-                      <RoleCard title="Create permission" iconClass="bi-plus-circle">
-                        <form onSubmit={createPermission} className="d-flex flex-column gap-3">
-                          <div>
-                            <label className="form-label small mb-1">Code</label>
-                            <input
-                              className="form-control form-control-sm font-monospace"
-                              value={newPermCode}
-                              onChange={(e) => setNewPermCode(e.target.value)}
-                              placeholder="e.g. CUSTOM_REPORT_VIEW"
-                            />
-                          </div>
-                          <div>
-                            <label className="form-label small mb-1">Description (optional)</label>
-                            <input className="form-control form-control-sm" value={newPermDesc} onChange={(e) => setNewPermDesc(e.target.value)} />
-                          </div>
-                          <button className="btn btn-primary btn-sm" type="submit" disabled={busy}>
-                            Add permission
-                          </button>
-                        </form>
-                      </RoleCard>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
+          {tab === 'permissions' && (
+            <AdminPermissions
+              matrixLoading={!rolePerms && !error}
+              rolePerms={rolePerms}
+              permissionsTotal={permissions.length}
+              permRole={permRole}
+              setPermRole={setPermRole}
+              permSelection={permSelection}
+              togglePermCode={togglePermCode}
+              saveRolePermissions={saveRolePermissions}
+              permSearch={permSearch}
+              setPermSearch={setPermSearch}
+              groupedPermissions={groupedPermissions}
+              newPermCode={newPermCode}
+              setNewPermCode={setNewPermCode}
+              newPermDesc={newPermDesc}
+              setNewPermDesc={setNewPermDesc}
+              createPermission={createPermission}
+              busy={busy}
+            />
           )}
         </>
       )}

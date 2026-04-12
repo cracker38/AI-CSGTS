@@ -22,6 +22,10 @@ public class ProjectAssignment {
 
   private String assignedRole;
 
+  /** Order within the project roster (drag-and-drop staffing). */
+  @Column(nullable = false)
+  private int position = 0;
+
   private Instant assignedAt = Instant.now();
 
   public Long getId() {
@@ -54,6 +58,14 @@ public class ProjectAssignment {
 
   public void setAssignedRole(String assignedRole) {
     this.assignedRole = assignedRole;
+  }
+
+  public int getPosition() {
+    return position;
+  }
+
+  public void setPosition(int position) {
+    this.position = position;
   }
 
   public Instant getAssignedAt() {

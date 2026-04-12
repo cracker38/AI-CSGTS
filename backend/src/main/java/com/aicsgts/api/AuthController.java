@@ -9,9 +9,11 @@ import com.aicsgts.repo.DepartmentRepository;
 import com.aicsgts.repo.JobRoleRepository;
 import com.aicsgts.security.AuthPrincipal;
 import com.aicsgts.security.JwtService;
+import com.aicsgts.service.LoginAuditService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.annotation.Nullable;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +22,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
 
 @RestController
@@ -31,23 +34,33 @@ public class AuthController {
   private final JobRoleRepository jobRoles;
   private final PasswordEncoder encoder;
   private final JwtService jwtService;
+  private final LoginAuditService loginAudit;
 
   public AuthController(
       AppUserRepository users,
       DepartmentRepository departments,
       JobRoleRepository jobRoles,
       PasswordEncoder encoder,
-      JwtService jwtService
+      JwtService jwtService,
+      LoginAuditService loginAudit
   ) {
     this.users = users;
     this.departments = departments;
     this.jobRoles = jobRoles;
     this.encoder = encoder;
     this.jwtService = jwtService;
+    this.loginAudit = loginAudit;
   }
 
+  /**
+   * Public self-registration for leadership roles only ({@link Role#MANAGER}, {@link Role#HR}).
+   * Employees are provisioned by an administrator ({@code POST /api/admin/users}).
+   */
   @PostMapping("/register")
   public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest req) {
+    if (req.role() != Role.MANAGER && req.role() != Role.HR) {
+      return ResponseEntity.badRequest().body(Map.of("error", "REGISTER_STAFF_ONLY"));
+    }
     if (users.findByEmail(req.email()).isPresent()) {
       return ResponseEntity.badRequest().body(Map.of("error", "EMAIL_ALREADY_EXISTS"));
     }
@@ -55,14 +68,14 @@ public class AuthController {
     Department dept = departments.findById(req.departmentId())
         .orElseThrow(() -> new IllegalArgumentException("Invalid departmentId"));
 
-    JobRole jobRole = jobRoles.findById(req.jobRoleId())
+    JobRole jobRole = req.jobRoleId() == null ? null : jobRoles.findById(req.jobRoleId())
         .orElseThrow(() -> new IllegalArgumentException("Invalid jobRoleId"));
 
     AppUser user = new AppUser();
     user.setName(req.name());
     user.setEmail(req.email());
     user.setPasswordHash(encoder.encode(req.password()));
-    user.setRole(Role.EMPLOYEE); // Must be auto-set
+    user.setRole(req.role());
     user.setActive(true);
     user.setDepartment(dept);
     user.setJobRole(jobRole);
@@ -70,16 +83,19 @@ public class AuthController {
     users.save(user);
     return ResponseEntity.ok(Map.of(
         "status", "REGISTERED",
-        "role", Role.EMPLOYEE
+        "role", req.role()
     ));
   }
 
   @PostMapping("/login")
-  public ResponseEntity<?> login(@Valid @RequestBody LoginRequest req) {
+  public ResponseEntity<?> login(@Valid @RequestBody LoginRequest req, HttpServletRequest http) {
     AppUser user = users.findByEmail(req.email()).orElse(null);
     if (user == null || !user.isActive() || !encoder.matches(req.password(), user.getPasswordHash())) {
+      loginAudit.recordAttempt(user, req.email(), false, http);
       return ResponseEntity.status(401).body(Map.of("error", "INVALID_CREDENTIALS"));
     }
+
+    loginAudit.recordAttempt(user, req.email(), true, http);
 
     boolean remember = Boolean.TRUE.equals(req.rememberMe());
     String token = jwtService.generateToken(
@@ -121,8 +137,9 @@ public class AuthController {
       @NotBlank String name,
       @Email @NotBlank String email,
       @NotBlank @Size(min = 8, max = 100) String password,
+      @NotNull Role role,
       @NotNull Long departmentId,
-      @NotNull Long jobRoleId
+      @Nullable Long jobRoleId
   ) {
   }
 
