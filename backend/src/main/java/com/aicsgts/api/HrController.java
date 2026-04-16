@@ -5,6 +5,7 @@ import com.aicsgts.repo.*;
 import com.aicsgts.service.AuditService;
 import com.aicsgts.service.JobDescriptionNlpService;
 import com.aicsgts.service.SkillGapService;
+import com.aicsgts.service.HrWorkforceStrategyService;
 import jakarta.annotation.Nullable;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -33,11 +34,13 @@ public class HrController {
   private final RequiredSkillRepository requiredSkills;
   private final TrainingProgramRepository trainingPrograms;
   private final TrainingAssignmentRepository trainingAssignments;
+  private final ProjectRepository projects;
   private final DepartmentRepository departments;
   private final AuditService audit;
   private final com.aicsgts.repo.SystemConfigRepository systemConfig;
   private final JobDescriptionNlpService jobDescriptionNlp;
   private final SkillGapService skillGapService;
+  private final HrWorkforceStrategyService workforceStrategy;
 
   public HrController(
       AppUserRepository users,
@@ -46,11 +49,13 @@ public class HrController {
       RequiredSkillRepository requiredSkills,
       TrainingProgramRepository trainingPrograms,
       TrainingAssignmentRepository trainingAssignments,
+      ProjectRepository projects,
       DepartmentRepository departments,
       AuditService audit,
       com.aicsgts.repo.SystemConfigRepository systemConfig,
       JobDescriptionNlpService jobDescriptionNlp,
-      SkillGapService skillGapService
+      SkillGapService skillGapService,
+      HrWorkforceStrategyService workforceStrategy
   ) {
     this.users = users;
     this.skills = skills;
@@ -58,11 +63,13 @@ public class HrController {
     this.requiredSkills = requiredSkills;
     this.trainingPrograms = trainingPrograms;
     this.trainingAssignments = trainingAssignments;
+    this.projects = projects;
     this.departments = departments;
     this.audit = audit;
     this.systemConfig = systemConfig;
     this.jobDescriptionNlp = jobDescriptionNlp;
     this.skillGapService = skillGapService;
+    this.workforceStrategy = workforceStrategy;
   }
 
   @GetMapping("/stats")
@@ -97,6 +104,13 @@ public class HrController {
     return m;
   }
 
+  @GetMapping("/strategy")
+  @PreAuthorize("hasAuthority('HR_EMPLOYEES')")
+  @Transactional(readOnly = true)
+  public Map<String, Object> workforceStrategy() {
+    return workforceStrategy.snapshot();
+  }
+
   @GetMapping("/employees")
   @PreAuthorize("hasAuthority('HR_EMPLOYEES')")
   @Transactional(readOnly = true)
@@ -128,6 +142,9 @@ public class HrController {
   @PostMapping("/skills")
   @PreAuthorize("hasAuthority('HR_SKILL_TAXONOMY')")
   public Map<String, Object> createSkill(@Valid @RequestBody SkillRequest req) {
+    if (skills.findAll().stream().anyMatch(s -> s.getName() != null && s.getName().equalsIgnoreCase(req.name().trim()))) {
+      return Map.of("status", "ALREADY_EXISTS");
+    }
     Skill s = new Skill();
     s.setName(req.name());
     if (req.category() != null && !req.category().isBlank()) {
@@ -372,6 +389,58 @@ public class HrController {
     return Map.of("status", "REJECTED");
   }
 
+  @GetMapping("/projects")
+  @PreAuthorize("hasAuthority('HR_TRAINING_MANAGEMENT')")
+  @Transactional(readOnly = true)
+  public List<?> listProjects() {
+    return projects.findAll().stream().map(pr -> {
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("id", pr.getId());
+      row.put("name", pr.getName());
+      row.put("requiredJobRoleId", pr.getRequiredJobRole() == null ? null : pr.getRequiredJobRole().getId());
+      row.put("requiredJobRoleName", pr.getRequiredJobRole() == null ? null : pr.getRequiredJobRole().getName());
+      row.put("deadlineAt", pr.getDeadlineAt());
+      row.put("daysToDeadline", daysToDeadline(pr));
+      return row;
+    }).toList();
+  }
+
+  @PostMapping("/projects")
+  @PreAuthorize("hasAuthority('HR_TRAINING_MANAGEMENT')")
+  public Map<String, Object> createProject(@Valid @RequestBody CreateProjectRequest req) {
+    Project pr = new Project();
+    pr.setName(req.name().trim());
+    if (req.requiredJobRoleId() != null) {
+      JobRole jr = jobRoles.findById(req.requiredJobRoleId()).orElseThrow(() -> new IllegalArgumentException("Invalid requiredJobRoleId"));
+      pr.setRequiredJobRole(jr);
+    }
+    if (req.deadlineDate() != null && !req.deadlineDate().isBlank()) {
+      pr.setDeadlineAt(java.time.LocalDate.parse(req.deadlineDate().trim()).atStartOfDay(java.time.ZoneOffset.UTC).toInstant());
+    }
+    projects.save(pr);
+    audit.log("HR_CREATE_PROJECT", "projectId=" + pr.getId());
+    return Map.of("status", "CREATED", "projectId", pr.getId());
+  }
+
+  @PutMapping("/projects/{projectId}/deadline")
+  @PreAuthorize("hasAuthority('HR_TRAINING_MANAGEMENT')")
+  public Map<String, Object> setProjectDeadline(@PathVariable("projectId") Long projectId, @RequestBody(required = false) ProjectDeadlineRequest req) {
+    Project pr = projects.findById(projectId).orElseThrow(() -> new IllegalArgumentException("Invalid projectId"));
+    Instant deadline = null;
+    if (req != null && req.deadlineDate() != null && !req.deadlineDate().isBlank()) {
+      deadline = java.time.LocalDate.parse(req.deadlineDate().trim()).atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+    }
+    pr.setDeadlineAt(deadline);
+    projects.save(pr);
+    audit.log("HR_SET_PROJECT_DEADLINE", "projectId=" + projectId);
+    return Map.of("status", "UPDATED", "deadlineAt", pr.getDeadlineAt(), "daysToDeadline", daysToDeadline(pr));
+  }
+
+  private static long daysToDeadline(Project project) {
+    if (project.getDeadlineAt() == null) return -1;
+    return java.time.temporal.ChronoUnit.DAYS.between(Instant.now(), project.getDeadlineAt());
+  }
+
   public record SetActiveRequest(@NotNull Boolean active) {
   }
 
@@ -405,6 +474,14 @@ public class HrController {
 
   public record ReviewRequest(String note) {
   }
+
+  public record CreateProjectRequest(
+      @NotBlank String name,
+      @Nullable Long requiredJobRoleId,
+      @Nullable String deadlineDate
+  ) {}
+
+  public record ProjectDeadlineRequest(@Nullable String deadlineDate) {}
 
   public record JobDescriptionPatchRequest(@Nullable String descriptionText) {
   }

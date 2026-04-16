@@ -45,10 +45,12 @@ public class SkillHealthPptService {
     int readiness = n == 0 ? 0 : (int) Math.round(sum / n);
 
     try (XMLSlideShow ppt = new XMLSlideShow()) {
-      ppt.setPageSize(new java.awt.Dimension(9144000, 6858000));
+      // Apache POI slide/page dimensions are in points (not EMUs).
+      // Use a normal 16:9 canvas to avoid malformed or repair-required PPTX files.
+      ppt.setPageSize(new java.awt.Dimension(960, 540));
       XSLFSlide slide = ppt.createSlide();
       XSLFTextBox box = slide.createTextBox();
-      box.setAnchor(new java.awt.Rectangle(360000, 360000, 8280000, 6000000));
+      box.setAnchor(new java.awt.Rectangle(40, 32, 880, 470));
       XSLFTextParagraph p0 = box.addNewTextParagraph();
       XSLFTextRun r0 = p0.addNewTextRun();
       r0.setText("AI-CSGTS — Organizational skill health");

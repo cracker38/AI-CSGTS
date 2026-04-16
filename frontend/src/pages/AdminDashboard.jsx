@@ -36,6 +36,12 @@ export default function AdminDashboard() {
   const [permSearch, setPermSearch] = useState('')
   const [permSelection, setPermSelection] = useState(() => new Set())
   const [jobRoles, setJobRoles] = useState([])
+  const [integrationHealth, setIntegrationHealth] = useState(null)
+  const [integrationHealthLoading, setIntegrationHealthLoading] = useState(false)
+  const [systemIntelligence, setSystemIntelligence] = useState(null)
+  const [systemIntelligenceLoading, setSystemIntelligenceLoading] = useState(false)
+  const [projects, setProjects] = useState([])
+  const [projectsLoading, setProjectsLoading] = useState(false)
 
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
@@ -211,6 +217,101 @@ export default function AdminDashboard() {
     if (tab !== 'permissions') return
     loadPermissionsForRole(permRole)
   }, [tab, permRole, loadPermissionsForRole])
+
+  const loadIntegrationHealth = useCallback(async () => {
+    setIntegrationHealthLoading(true)
+    try {
+      const res = await api.get('/api/admin/integrations/health')
+      setIntegrationHealth(res.data)
+    } catch {
+      setIntegrationHealth({
+        status: 'DOWN',
+        checkedAt: new Date().toISOString(),
+        jira: { configured: false, status: 'ERROR', missing: 'health endpoint failed' },
+        asana: { configured: false, status: 'ERROR', missing: 'health endpoint failed' },
+        ldap: { configured: false, status: 'ERROR', missing: 'health endpoint failed' }
+      })
+    } finally {
+      setIntegrationHealthLoading(false)
+    }
+  }, [])
+
+  const loadSystemIntelligence = useCallback(async () => {
+    setSystemIntelligenceLoading(true)
+    try {
+      const res = await api.get('/api/admin/system-intelligence')
+      setSystemIntelligence(res.data)
+    } catch {
+      setSystemIntelligence(null)
+    } finally {
+      setSystemIntelligenceLoading(false)
+    }
+  }, [])
+
+  const loadProjects = useCallback(async () => {
+    setProjectsLoading(true)
+    try {
+      const res = await api.get('/api/admin/projects')
+      setProjects(res.data || [])
+    } catch {
+      setProjects([])
+    } finally {
+      setProjectsLoading(false)
+    }
+  }, [])
+
+  const createProject = useCallback(async (payload) => {
+    setBusy(true)
+    setError('')
+    setMsg('')
+    try {
+      await api.post('/api/admin/projects', payload || {})
+      await loadProjects()
+      setMsg('Project created.')
+    } catch (e) {
+      setError(e?.response?.data?.error || 'PROJECT_CREATE_FAILED')
+    } finally {
+      setBusy(false)
+    }
+  }, [loadProjects])
+
+  const saveProjectDeadline = useCallback(async (projectId, deadlineDate) => {
+    setBusy(true)
+    setError('')
+    setMsg('')
+    try {
+      await api.put(`/api/admin/projects/${projectId}/deadline`, { deadlineDate: deadlineDate || null })
+      await loadProjects()
+      setMsg('Project deadline updated.')
+    } catch (e) {
+      setError(e?.response?.data?.error || 'PROJECT_DEADLINE_UPDATE_FAILED')
+    } finally {
+      setBusy(false)
+    }
+  }, [loadProjects])
+
+  const saveDepartmentThresholds = useCallback(async (updates) => {
+    const res = await api.patch('/api/admin/system-intelligence/department-thresholds', updates || {})
+    await loadSystemIntelligence()
+    return res?.data
+  }, [loadSystemIntelligence])
+
+  useEffect(() => {
+    if (tab !== 'system') return
+    loadIntegrationHealth()
+    loadSystemIntelligence()
+    loadProjects()
+  }, [tab, loadIntegrationHealth, loadSystemIntelligence, loadProjects])
+
+  useEffect(() => {
+    if (tab !== 'system') return undefined
+    const id = window.setInterval(() => {
+      loadIntegrationHealth()
+      loadSystemIntelligence()
+      loadProjects()
+    }, 60000)
+    return () => window.clearInterval(id)
+  }, [tab, loadIntegrationHealth, loadSystemIntelligence, loadProjects])
 
   async function saveConfig(e) {
     e.preventDefault()
@@ -636,6 +737,19 @@ export default function AdminDashboard() {
                   setBusy(false)
                 }
               }}
+              integrationHealth={integrationHealth}
+              integrationHealthLoading={integrationHealthLoading}
+              onRefreshIntegrationHealth={loadIntegrationHealth}
+              systemIntelligence={systemIntelligence}
+              systemIntelligenceLoading={systemIntelligenceLoading}
+              onRefreshSystemIntelligence={loadSystemIntelligence}
+              onSaveDepartmentThresholds={saveDepartmentThresholds}
+              projects={projects}
+              projectsLoading={projectsLoading}
+              jobRoles={jobRoles}
+              onRefreshProjects={loadProjects}
+              onCreateProject={createProject}
+              onSaveProjectDeadline={saveProjectDeadline}
               busy={busy}
             />
           )}

@@ -3,7 +3,6 @@ import { useLocation } from 'react-router-dom'
 import { api } from '../api'
 import { BRAND_SUBTITLE, BRAND_TITLE } from '../content/branding.js'
 import { downloadBlob, downloadTextFile, formatInstant } from './admin/adminHelpers.js'
-import CsgtsModuleMap from './dashboard/CsgtsModuleMap.jsx'
 import { RoleAlerts, RoleLoading } from './dashboard/dashboardRoleUi.jsx'
 
 const COLOR = {
@@ -49,7 +48,7 @@ function roleTitle(role) {
   return r.charAt(0) + r.slice(1).toLowerCase()
 }
 
-const EMPLOYEE_SECTION_HASHES = ['skill-gaps', 'my-skills', 'cert-vault', 'insights', 'training-recs', 'training']
+const EMPLOYEE_SECTION_HASHES = ['skill-gaps', 'competency-analysis', 'my-skills', 'cert-vault', 'insights', 'training-recs', 'training']
 
 function parseEmployeeView(hash) {
   const h = (hash || '').replace(/^#/, '')
@@ -72,6 +71,13 @@ const EMP_VIEW_UI = {
     kpiTitle: 'Gap severity snapshot',
     kpiHint: 'Aligned with the analysis below',
     icon: 'bi-bar-chart-steps'
+  },
+  'competency-analysis': {
+    eyebrow: 'Competency intelligence',
+    lead: 'Data-driven scoring, gap severity, readiness, and action recommendations generated from your profile and history.',
+    kpiTitle: 'Readiness posture',
+    kpiHint: 'Weighted competency model',
+    icon: 'bi-clipboard2-data-fill'
   },
   'my-skills': {
     eyebrow: 'Proficiency ledger',
@@ -122,6 +128,8 @@ export default function EmployeeDashboard() {
   const [gapSearch, setGapSearch] = useState('')
   const [gapCategoryFilter, setGapCategoryFilter] = useState('')
   const [trainingFormatFilter, setTrainingFormatFilter] = useState('')
+  const [analysisSortBy, setAnalysisSortBy] = useState('gapPoints')
+  const [analysisSortDir, setAnalysisSortDir] = useState('desc')
   const [certTitle, setCertTitle] = useState('')
   const [certIssuer, setCertIssuer] = useState('')
   const [certExpires, setCertExpires] = useState('')
@@ -175,6 +183,20 @@ export default function EmployeeDashboard() {
   const certifications = data?.certifications || []
   const managerAssessments = data?.managerAssessments || []
   const aiInsights = data?.aiInsights || null
+  const reminders = data?.reminders || []
+  const skillConfidence = data?.skillConfidence || null
+  const workflow = data?.workflow || null
+  const profileMetrics = data?.profileMetrics || null
+  const competencyAnalysis = data?.competencyAnalysis || null
+  const analysisTable = competencyAnalysis?.skillAnalysisTable || []
+  const analysisReadiness = competencyAnalysis?.readiness || null
+  const analysisGapSummary = competencyAnalysis?.gapSummary || null
+  const analysisTraining = competencyAnalysis?.trainingRecommendations || []
+  const analysisCareer = competencyAnalysis?.careerSuggestions || []
+  const analysisInsights = competencyAnalysis?.actionableInsights || {}
+  const analysisCoverage = competencyAnalysis?.dataCoverage || null
+  const analysisSkillDecay = competencyAnalysis?.skillDecayIndicators || []
+  const analysisTimeline = competencyAnalysis?.activityTimeline || []
 
   const gapCategories = useMemo(() => {
     const set = new Set()
@@ -204,6 +226,33 @@ export default function EmployeeDashboard() {
     if (!trainingFormatFilter) return recs
     return recs.filter((r) => String(r.deliveryFormat || '') === trainingFormatFilter)
   }, [recs, trainingFormatFilter])
+
+  const sortedAnalysisRows = useMemo(() => {
+    const list = [...analysisTable]
+    const dir = analysisSortDir === 'asc' ? 1 : -1
+    list.sort((a, b) => {
+      const av = a?.[analysisSortBy]
+      const bv = b?.[analysisSortBy]
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir
+      return String(av || '').localeCompare(String(bv || '')) * dir
+    })
+    return list
+  }, [analysisTable, analysisSortBy, analysisSortDir])
+
+  function readinessTone(status) {
+    if (status === 'Ready') return 'success'
+    if (status === 'Needs Improvement') return 'warning'
+    return 'danger'
+  }
+
+  function toggleAnalysisSort(next) {
+    if (analysisSortBy === next) {
+      setAnalysisSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setAnalysisSortBy(next)
+    setAnalysisSortDir('desc')
+  }
 
   const initial = useMemo(() => (profile.name || 'U').trim().charAt(0).toUpperCase(), [profile.name])
 
@@ -237,6 +286,83 @@ export default function EmployeeDashboard() {
 
   function printGapReport() {
     window.print()
+  }
+
+  function exportCompetencyAnalysisCsv() {
+    const rows = competencyAnalysis?.skillAnalysisTable || []
+    if (!rows.length) return
+    const header = [
+      'skill',
+      'category',
+      'frameworkTags',
+      'selfLevel',
+      'requiredLevel',
+      'competencyScore',
+      'requiredScore',
+      'gapPoints',
+      'gapClass'
+    ].join(',')
+    const lines = rows.map((r) =>
+      [
+        r.skill,
+        r.category,
+        (r.frameworkTags || []).join('|'),
+        r.selfLevel,
+        r.requiredLevel,
+        r.competencyScore,
+        r.requiredScore,
+        r.gapPoints,
+        r.gapClass
+      ]
+        .map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`)
+        .join(',')
+    )
+    downloadTextFile(`competency-analysis-${new Date().toISOString().slice(0, 10)}.csv`, [header, ...lines].join('\n'))
+  }
+
+  function exportReadinessReportCsv() {
+    if (!competencyAnalysis) return
+    const rows = competencyAnalysis?.skillAnalysisTable || []
+    const readiness = competencyAnalysis?.readiness || {}
+    const summary = competencyAnalysis?.gapSummary || {}
+    const prioritySkills = competencyAnalysis?.actionableInsights?.prioritySkills || []
+    const sections = []
+    sections.push('section,key,value')
+    sections.push(`"readiness","status","${String(readiness.status || '').replace(/"/g, '""')}"`)
+    sections.push(`"readiness","score","${String(readiness.score ?? '').replace(/"/g, '""')}"`)
+    sections.push(`"gap_summary","minorGapCount","${String(summary.minorGapCount ?? 0)}"`)
+    sections.push(`"gap_summary","moderateGapCount","${String(summary.moderateGapCount ?? 0)}"`)
+    sections.push(`"gap_summary","criticalGapCount","${String(summary.criticalGapCount ?? 0)}"`)
+    sections.push(`"gap_summary","totalAnalyzedSkills","${String(summary.totalAnalyzedSkills ?? rows.length)}"`)
+    sections.push('')
+    sections.push('priority_skill,priority,timeline,expected_impact')
+    for (const p of prioritySkills) {
+      sections.push(
+        [p.skill, p.priority, p.timeline, p.expectedImpact]
+          .map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`)
+          .join(',')
+      )
+    }
+    sections.push('')
+    sections.push('skill,category,framework_tags,self_level,required_level,competency_score,required_score,gap_points,gap_class')
+    for (const r of rows) {
+      sections.push(
+        [
+          r.skill,
+          r.category,
+          (r.frameworkTags || []).join('|'),
+          r.selfLevel,
+          r.requiredLevel,
+          r.competencyScore,
+          r.requiredScore,
+          r.gapPoints,
+          r.gapClass
+        ]
+          .map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`)
+          .join(',')
+      )
+    }
+    downloadTextFile(`employee-readiness-report-${new Date().toISOString().slice(0, 10)}.csv`, sections.join('\n'))
   }
 
   async function uploadCertification(e) {
@@ -309,6 +435,7 @@ export default function EmployeeDashboard() {
 
   const nav = [
     { id: 'skill-gaps', label: 'Skill gaps', icon: 'bi-bar-chart-steps' },
+    { id: 'competency-analysis', label: 'Competency', icon: 'bi-clipboard2-data' },
     { id: 'my-skills', label: 'My skills', icon: 'bi-stars' },
     { id: 'cert-vault', label: 'Vault', icon: 'bi-folder2-open' },
     { id: 'insights', label: 'Insights', icon: 'bi-activity' },
@@ -443,6 +570,15 @@ export default function EmployeeDashboard() {
                 <span className="emp-dash-kpi__lab">{GAP_STATUS.RED.label}</span>
               </div>
             </div>
+            <div className="emp-dash-kpi">
+              <div className="emp-dash-kpi__icon">
+                <i className="bi bi-shield-check" />
+              </div>
+              <div>
+                <span className="emp-dash-kpi__val">{skillConfidence?.score ?? 0}%</span>
+                <span className="emp-dash-kpi__lab">Confidence</span>
+              </div>
+            </div>
           </div>
 
           <div className={`emp-dash-grid emp-dash-grid--view-${empView}`}>
@@ -568,6 +704,199 @@ export default function EmployeeDashboard() {
                       </tbody>
                     </table>
                   </div>
+                )}
+              </section>
+
+              <section
+                className={`emp-panel emp-panel--accent-indigo${panelViewClass('competency-analysis')}`}
+                id="competency-analysis"
+              >
+                <header className="emp-panel__head">
+                  <span className="emp-panel__icon">
+                    <i className="bi bi-clipboard2-data" />
+                  </span>
+                  <div>
+                    <h2 className="emp-panel__title">Competency analysis</h2>
+                    <p className="emp-panel__sub">
+                      Weighted scores across self, manager, experience, and certification relevance with gap severity and readiness status.
+                    </p>
+                  </div>
+                </header>
+                {!competencyAnalysis ? (
+                  <p className="emp-muted">Competency analysis is not available yet.</p>
+                ) : (
+                  <>
+                    <div className="d-flex justify-content-end mb-2">
+                      <button
+                        type="button"
+                        className="emp-dash-sync me-2"
+                        onClick={exportReadinessReportCsv}
+                        disabled={!analysisTable.length}
+                        title="Download full readiness report as CSV"
+                      >
+                        <i className="bi bi-file-earmark-spreadsheet" aria-hidden />
+                        Export readiness report
+                      </button>
+                      <button
+                        type="button"
+                        className="emp-dash-sync"
+                        onClick={exportCompetencyAnalysisCsv}
+                        disabled={!analysisTable.length}
+                        title="Download competency analysis as CSV"
+                      >
+                        <i className="bi bi-download" aria-hidden />
+                        Export CSV
+                      </button>
+                    </div>
+                    <div className="d-flex flex-wrap gap-2 mb-3">
+                      <span className={`badge text-bg-${readinessTone(analysisReadiness?.status)} px-3 py-2`}>
+                        Readiness: {analysisReadiness?.status || 'N/A'}
+                      </span>
+                      <span className="badge text-bg-light border px-3 py-2">
+                        Score: {analysisReadiness?.score ?? 0}
+                      </span>
+                      <span className="badge text-bg-light border px-3 py-2">
+                        Minor: {analysisGapSummary?.minorGapCount ?? 0}
+                      </span>
+                      <span className="badge text-bg-light border px-3 py-2">
+                        Moderate: {analysisGapSummary?.moderateGapCount ?? 0}
+                      </span>
+                      <span className="badge text-bg-light border px-3 py-2">
+                        Critical: {analysisGapSummary?.criticalGapCount ?? 0}
+                      </span>
+                    </div>
+                    <div className="emp-table-wrap mb-3">
+                      <table className="emp-table">
+                        <thead>
+                          <tr>
+                            <th role="button" onClick={() => toggleAnalysisSort('skill')}>Skill</th>
+                            <th role="button" onClick={() => toggleAnalysisSort('frameworkTags')}>Framework</th>
+                            <th role="button" onClick={() => toggleAnalysisSort('competencyScore')}>Score</th>
+                            <th role="button" onClick={() => toggleAnalysisSort('requiredScore')}>Required</th>
+                            <th role="button" onClick={() => toggleAnalysisSort('gapPoints')}>Gap</th>
+                            <th role="button" onClick={() => toggleAnalysisSort('gapClass')}>Class</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedAnalysisRows.map((row, idx) => (
+                            <tr key={`${row.skill}-${idx}`}>
+                              <td>{row.skill}</td>
+                              <td>{(row.frameworkTags || []).join(', ') || 'SFIA'}</td>
+                              <td>{row.competencyScore}</td>
+                              <td>{row.requiredScore}</td>
+                              <td>{row.gapPoints}</td>
+                              <td>{row.gapClass}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="row g-2">
+                      <div className="col-12 col-lg-6">
+                        <div className="border rounded p-2 h-100">
+                          <p className="fw-semibold mb-2">Training recommendations</p>
+                          {analysisTraining.length === 0 ? (
+                            <p className="emp-muted mb-0">No training recommendations yet.</p>
+                          ) : (
+                            <ul className="small mb-0">
+                              {analysisTraining.slice(0, 5).map((t, idx) => (
+                                <li key={`${t.skill}-${idx}`}>
+                                  {t.skill}: {t.suggestedProgram} ({t.gapSeverity}, {t.timeline})
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                      <div className="col-12 col-lg-6">
+                        <div className="border rounded p-2 h-100">
+                          <p className="fw-semibold mb-2">Career suggestions</p>
+                          {analysisCareer.length === 0 ? (
+                            <p className="emp-muted mb-0">No career suggestions yet.</p>
+                          ) : (
+                            <ul className="small mb-0">
+                              {analysisCareer.map((c, idx) => (
+                                <li key={`${c.path}-${idx}`}>
+                                  {c.path} ({c.fit}) - {c.nextStep}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    {analysisInsights?.prioritySkills?.length ? (
+                      <div className="border rounded p-2 mt-2">
+                        <p className="fw-semibold mb-2">Priority skills to improve</p>
+                        <ul className="small mb-0">
+                          {analysisInsights.prioritySkills.slice(0, 5).map((p, idx) => (
+                            <li key={`${p.skill}-${idx}`}>
+                              {p.skill}: {p.priority} ({p.timeline}) - {p.expectedImpact}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {analysisCoverage ? (
+                      <div className="border rounded p-2 mt-2">
+                        <p className="fw-semibold mb-2">Data coverage</p>
+                        <div className="d-flex flex-wrap gap-2 mb-2">
+                          <span className="badge text-bg-light border px-3 py-2">
+                            Coverage: {analysisCoverage.coveragePct ?? 0}%
+                          </span>
+                          <span className="badge text-bg-light border px-3 py-2">
+                            Missing inputs: {(analysisCoverage.missingInputs || []).length}
+                          </span>
+                        </div>
+                        {(analysisCoverage.sourcesUsed || []).length > 0 ? (
+                          <p className="small mb-1">
+                            <strong>Sources used:</strong> {(analysisCoverage.sourcesUsed || []).join(', ')}
+                          </p>
+                        ) : null}
+                        {(analysisCoverage.missingInputs || []).length > 0 ? (
+                          <p className="small mb-0 text-body-secondary">
+                            <strong>Missing:</strong> {(analysisCoverage.missingInputs || []).join(', ')}
+                          </p>
+                        ) : (
+                          <p className="small mb-0 text-success-emphasis">All required analysis inputs are present.</p>
+                        )}
+                      </div>
+                    ) : null}
+                    <div className="row g-2 mt-1">
+                      <div className="col-12 col-lg-6">
+                        <div className="border rounded p-2 h-100">
+                          <p className="fw-semibold mb-2">Skill decay indicators</p>
+                          {analysisSkillDecay.length === 0 ? (
+                            <p className="emp-muted mb-0">No decay indicators available yet.</p>
+                          ) : (
+                            <ul className="small mb-0">
+                              {analysisSkillDecay.slice(0, 6).map((d, idx) => (
+                                <li key={`${d.skill}-${idx}`}>
+                                  {d.skill}: {d.risk} risk ({d.daysSinceUpdate} days) - {d.recommendation}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                      <div className="col-12 col-lg-6">
+                        <div className="border rounded p-2 h-100">
+                          <p className="fw-semibold mb-2">Activity timeline</p>
+                          {analysisTimeline.length === 0 ? (
+                            <p className="emp-muted mb-0">No activity events recorded yet.</p>
+                          ) : (
+                            <ul className="small mb-0">
+                              {analysisTimeline.slice(0, 6).map((event, idx) => (
+                                <li key={`${event.type}-${idx}`}>
+                                  {event.title} - {formatInstant(event.at)}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </>
                 )}
               </section>
 
@@ -793,6 +1122,16 @@ export default function EmployeeDashboard() {
                         <strong>Market / data:</strong> {aiInsights.marketNote}
                       </p>
                     ) : null}
+                    {(aiInsights.learningPath || []).length > 0 ? (
+                      <div className="mt-2">
+                        <strong>Learning path:</strong>
+                        <ul className="mb-0 mt-1">
+                          {(aiInsights.learningPath || []).map((step, idx) => (
+                            <li key={idx}>{step}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {managerAssessments.length === 0 ? (
@@ -915,10 +1254,18 @@ export default function EmployeeDashboard() {
                 <div className="emp-profile-roadmap">
                   <p className="emp-trend-head">Extended profile (roadmap)</p>
                   <p className="emp-muted small mb-2">
-                    Competency module extras planned: certification vault, project experience timeline, peer/manager endorsements, and
-                    automated profile reminders — use <strong>My skills</strong> and <strong>Skill gap analysis</strong> for the live MVP.
+                    Profile completeness formula: {profileMetrics?.formula || '(filled_fields / total_fields) * 100'}.
+                    Filled fields: {profileMetrics?.filledFields ?? 0}/{profileMetrics?.totalFields ?? 0}.
                   </p>
                 </div>
+                {skillConfidence ? (
+                  <div className="small mb-2">
+                    <strong>Skill confidence formula:</strong> {skillConfidence.formula}
+                    <div className="text-body-secondary">
+                      self: {skillConfidence.selfAssessment}% · endorsements: {skillConfidence.endorsements}% · manager: {skillConfidence.managerRating}%
+                    </div>
+                  </div>
+                ) : null}
                 <p className="emp-trend-head">Gap distribution</p>
                 <div className="emp-trends">
                   {['GREEN', 'YELLOW', 'ORANGE', 'RED'].map((k) => {
@@ -937,6 +1284,43 @@ export default function EmployeeDashboard() {
                     )
                   })}
                 </div>
+              </section>
+
+              <section className={`emp-panel emp-panel--compact emp-panel--accent-cyan${sectionMode ? ' emp-panel--view-context' : ''}`}>
+                <header className="emp-panel__head">
+                  <span className="emp-panel__icon">
+                    <i className="bi bi-arrow-repeat" />
+                  </span>
+                  <div>
+                    <h2 className="emp-panel__title">Autonomous workflow</h2>
+                    <p className="emp-panel__sub">Update skills, AI validation, manager review, recalculation, recommendation.</p>
+                  </div>
+                </header>
+                {workflow?.steps?.length ? (
+                  <div className="small mb-2">
+                    {workflow.steps.map((s, idx) => (
+                      <span key={s}>
+                        {idx > 0 ? ' -> ' : ''}
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                {reminders.length === 0 ? (
+                  <p className="emp-muted emp-muted--pad mb-0">No reminders. Profile is healthy and recently updated.</p>
+                ) : (
+                  <ul className="emp-notif-list">
+                    {reminders.map((r, idx) => (
+                      <li key={`${r.code}-${idx}`} className="emp-notif">
+                        <span className="emp-notif__dot emp-notif__dot--info" aria-hidden />
+                        <div className="emp-notif__body">
+                          <div className="emp-notif__title">{r.code}</div>
+                          <div className="small text-body-secondary">{r.message}</div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </section>
 
               <section
@@ -980,8 +1364,6 @@ export default function EmployeeDashboard() {
               </section>
             </aside>
           </div>
-
-          <CsgtsModuleMap role="EMPLOYEE" />
         </div>
       )}
     </>

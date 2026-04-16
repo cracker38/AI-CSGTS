@@ -5,7 +5,9 @@ import com.aicsgts.repo.*;
 import com.aicsgts.security.AuthPrincipal;
 import com.aicsgts.service.AuditService;
 import com.aicsgts.service.CompliancePackService;
+import com.aicsgts.service.IntegrationHealthService;
 import com.aicsgts.service.SkillHealthPptService;
+import com.aicsgts.service.SystemIntelligenceService;
 import jakarta.annotation.Nullable;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
@@ -38,6 +40,7 @@ public class AdminController {
   private final AppUserRepository users;
   private final DepartmentRepository departments;
   private final JobRoleRepository jobRoles;
+  private final ProjectRepository projects;
   private final SystemConfigRepository config;
   private final AuditLogRepository audit;
   private final AuditService auditService;
@@ -47,11 +50,14 @@ public class AdminController {
   private final LoginEventRepository loginEvents;
   private final CompliancePackService compliancePackService;
   private final SkillHealthPptService skillHealthPptService;
+  private final IntegrationHealthService integrationHealthService;
+  private final SystemIntelligenceService systemIntelligenceService;
 
   public AdminController(
       AppUserRepository users,
       DepartmentRepository departments,
       JobRoleRepository jobRoles,
+      ProjectRepository projects,
       SystemConfigRepository config,
       AuditLogRepository audit,
       AuditService auditService,
@@ -60,11 +66,14 @@ public class AdminController {
       RolePermissionRepository rolePermissions,
       LoginEventRepository loginEvents,
       CompliancePackService compliancePackService,
-      SkillHealthPptService skillHealthPptService
+      SkillHealthPptService skillHealthPptService,
+      IntegrationHealthService integrationHealthService,
+      SystemIntelligenceService systemIntelligenceService
   ) {
     this.users = users;
     this.departments = departments;
     this.jobRoles = jobRoles;
+    this.projects = projects;
     this.config = config;
     this.audit = audit;
     this.auditService = auditService;
@@ -74,6 +83,8 @@ public class AdminController {
     this.loginEvents = loginEvents;
     this.compliancePackService = compliancePackService;
     this.skillHealthPptService = skillHealthPptService;
+    this.integrationHealthService = integrationHealthService;
+    this.systemIntelligenceService = systemIntelligenceService;
   }
 
   private AuthPrincipal principal() {
@@ -223,6 +234,79 @@ public class AdminController {
     config.save(sc);
     auditService.log("ADMIN_UPDATE_CONFIG", "gapAlertRank=" + req.gapAlertRank());
     return Map.of("status", "UPDATED");
+  }
+
+  @GetMapping("/integrations/health")
+  @PreAuthorize("hasAuthority('ADMIN_CONFIG')")
+  public Map<String, Object> integrationsHealth() {
+    return integrationHealthService.check();
+  }
+
+  @GetMapping("/system-intelligence")
+  @PreAuthorize("hasAuthority('ADMIN_CONFIG')")
+  public Map<String, Object> systemIntelligence() {
+    return systemIntelligenceService.snapshot();
+  }
+
+  @PatchMapping("/system-intelligence/department-thresholds")
+  @PreAuthorize("hasAuthority('ADMIN_CONFIG')")
+  public Map<String, Object> upsertDepartmentThresholds(@RequestBody Map<String, Integer> departmentThresholds) {
+    return systemIntelligenceService.upsertDepartmentThresholds(departmentThresholds == null ? Map.of() : departmentThresholds);
+  }
+
+  @GetMapping("/projects")
+  @PreAuthorize("hasAuthority('ADMIN_CONFIG')")
+  @Transactional(readOnly = true)
+  public List<?> listProjects() {
+    return projects.findAll().stream().map(pr -> {
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("id", pr.getId());
+      row.put("name", pr.getName());
+      row.put("requiredJobRoleId", pr.getRequiredJobRole() == null ? null : pr.getRequiredJobRole().getId());
+      row.put("requiredJobRoleName", pr.getRequiredJobRole() == null ? null : pr.getRequiredJobRole().getName());
+      row.put("deadlineAt", pr.getDeadlineAt());
+      row.put("daysToDeadline", daysToDeadline(pr));
+      return row;
+    }).toList();
+  }
+
+  @PostMapping("/projects")
+  @PreAuthorize("hasAuthority('ADMIN_CONFIG')")
+  public Map<String, Object> createProject(@Valid @RequestBody CreateProjectRequest req) {
+    Project pr = new Project();
+    pr.setName(req.name().trim());
+    if (req.requiredJobRoleId() != null) {
+      JobRole jr = jobRoles.findById(req.requiredJobRoleId()).orElseThrow(() -> new IllegalArgumentException("Invalid requiredJobRoleId"));
+      pr.setRequiredJobRole(jr);
+    }
+    if (req.deadlineDate() != null && !req.deadlineDate().isBlank()) {
+      pr.setDeadlineAt(java.time.LocalDate.parse(req.deadlineDate().trim()).atStartOfDay(java.time.ZoneOffset.UTC).toInstant());
+    }
+    projects.save(pr);
+    auditService.log("ADMIN_CREATE_PROJECT", "projectId=" + pr.getId());
+    return Map.of("status", "CREATED", "projectId", pr.getId());
+  }
+
+  @PutMapping("/projects/{projectId}/deadline")
+  @PreAuthorize("hasAuthority('ADMIN_CONFIG')")
+  public Map<String, Object> setProjectDeadline(
+      @PathVariable("projectId") Long projectId,
+      @RequestBody(required = false) ProjectDeadlineRequest req
+  ) {
+    Project pr = projects.findById(projectId).orElseThrow(() -> new IllegalArgumentException("Invalid projectId"));
+    Instant deadline = null;
+    if (req != null && req.deadlineDate() != null && !req.deadlineDate().isBlank()) {
+      deadline = java.time.LocalDate.parse(req.deadlineDate().trim()).atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+    }
+    pr.setDeadlineAt(deadline);
+    projects.save(pr);
+    auditService.log("ADMIN_SET_PROJECT_DEADLINE", "projectId=" + projectId);
+    return Map.of("status", "UPDATED", "deadlineAt", pr.getDeadlineAt(), "daysToDeadline", daysToDeadline(pr));
+  }
+
+  private static long daysToDeadline(Project project) {
+    if (project.getDeadlineAt() == null) return -1;
+    return java.time.temporal.ChronoUnit.DAYS.between(Instant.now(), project.getDeadlineAt());
   }
 
   @GetMapping("/audit/compliance-pack.zip")
@@ -401,6 +485,14 @@ public class AdminController {
       @Nullable Boolean scheduledReportingEnabled,
       @Nullable String reportingRecipientEmail
   ) {}
+
+  public record CreateProjectRequest(
+      @NotBlank String name,
+      @Nullable Long requiredJobRoleId,
+      @Nullable String deadlineDate
+  ) {}
+
+  public record ProjectDeadlineRequest(@Nullable String deadlineDate) {}
 
   @GetMapping("/permissions")
   @PreAuthorize("hasAuthority('ADMIN_CONFIG')")

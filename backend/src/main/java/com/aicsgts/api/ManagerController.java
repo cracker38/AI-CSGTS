@@ -18,11 +18,17 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @RestController
@@ -93,6 +99,13 @@ public class ManagerController {
       out.put("aggregateGaps", Map.of("green", 0, "yellow", 0, "orange", 0, "red", 0));
       out.put("trainingPipeline", Map.of());
       out.put("projectCoverage", List.of());
+      out.put("managerIntelligence", Map.of(
+          "teamSkillCoverageIndex", 0,
+          "weightedTeamScores", List.of(),
+          "riskAlerts", List.of(),
+          "aiSuggestions", Map.of(),
+          "workflow", List.of("Review Team", "Validate Skills", "Analyze Gaps", "Approve Training", "Allocate Resources")
+      ));
       return out;
     }
 
@@ -194,10 +207,13 @@ public class ManagerController {
 
     var projectCoverage = projects.findAll().stream().map(pr -> {
       Map<String, Object> row = new LinkedHashMap<>();
+      long daysToDeadline = daysToDeadline(pr);
       row.put("id", pr.getId());
       row.put("name", pr.getName());
       row.put("requiredJobRoleId", pr.getRequiredJobRole() == null ? null : pr.getRequiredJobRole().getId());
       row.put("requiredJobRoleName", pr.getRequiredJobRole() == null ? null : pr.getRequiredJobRole().getName());
+      row.put("deadlineAt", pr.getDeadlineAt());
+      row.put("daysToDeadline", daysToDeadline);
       row.put(
           "assigneesInMyDept",
           projectAssignments.countByProjectIdAndEmployeeDepartmentIdAndEmployeeRole(pr.getId(), deptId, Role.EMPLOYEE)
@@ -223,7 +239,172 @@ public class ManagerController {
     out.put("aggregateGaps", Map.of("green", aggG, "yellow", aggY, "orange", aggO, "red", aggR));
     out.put("trainingPipeline", trainingPipeline);
     out.put("projectCoverage", projectCoverage);
+    out.put("managerIntelligence", buildManagerIntelligence(team, projectCoverage, me.getDepartment().getId(), me.getId()));
     return out;
+  }
+
+  private Map<String, Object> buildManagerIntelligence(
+      List<AppUser> team,
+      List<Map<String, Object>> projectCoverage,
+      long deptId,
+      long managerId
+  ) {
+    int coverageIndex = teamSkillCoverageIndex(team);
+    List<Map<String, Object>> weightedScores = teamWeightedScores(team, managerId);
+    List<Map<String, Object>> riskAlerts = detectRiskAlerts(projectCoverage, deptId);
+    Map<String, Object> ai = Map.of(
+        "bestFitEmployeesByProject", bestFitEmployeesByProject(projectCoverage, team, deptId),
+        "teamRestructuringOptions", restructuringOptions(weightedScores),
+        "teamFailureRisk", riskAlerts.isEmpty() ? "LOW" : (riskAlerts.size() >= 2 ? "HIGH" : "MEDIUM"),
+        "skillBottlenecks", topSkillBottlenecks(team)
+    );
+    return Map.of(
+        "teamSkillCoverageIndex", coverageIndex,
+        "coverageFormula", "coverage = available_skills / required_skills * 100",
+        "weightedTeamScores", weightedScores,
+        "weightedFormula", "final_skill_score = (employee_score * 0.6) + (manager_score * 0.4)",
+        "riskAlerts", riskAlerts,
+        "aiSuggestions", ai,
+        "workflow", List.of("Review Team", "Validate Skills", "Analyze Gaps", "Approve Training", "Allocate Resources")
+    );
+  }
+
+  private int teamSkillCoverageIndex(List<AppUser> team) {
+    Set<Long> availableSkills = new HashSet<>();
+    Set<Long> requiredSkillsSet = new HashSet<>();
+    for (AppUser emp : team) {
+      employeeSkills.findByEmployeeId(emp.getId()).forEach(es -> availableSkills.add(es.getSkill().getId()));
+      if (emp.getJobRole() != null) {
+        requiredSkills.findByJobRoleId(emp.getJobRole().getId()).forEach(rs -> requiredSkillsSet.add(rs.getSkill().getId()));
+      }
+    }
+    if (requiredSkillsSet.isEmpty()) return 100;
+    int covered = (int) requiredSkillsSet.stream().filter(availableSkills::contains).count();
+    return (int) Math.round((covered * 100.0) / requiredSkillsSet.size());
+  }
+
+  private List<Map<String, Object>> teamWeightedScores(List<AppUser> team, long managerId) {
+    List<Map<String, Object>> out = new ArrayList<>();
+    for (AppUser emp : team) {
+      var gaps = skillGapService.computeForEmployee(emp);
+      int total = gaps.greenCount() + gaps.yellowCount() + gaps.orangeCount() + gaps.redCount();
+      double employeeScore = total == 0 ? 100.0 : (100.0 * gaps.greenCount()) / total;
+      List<ManagerSkillAssessment> assessments = managerAssessments
+          .findByManager_IdAndEmployee_IdOrderByCreatedAtDesc(managerId, emp.getId());
+      double managerScore = assessments.isEmpty() ? employeeScore : assessments.stream()
+          .map(ManagerSkillAssessment::getAssessedLevel)
+          .mapToDouble(this::levelToScore)
+          .average()
+          .orElse(employeeScore);
+      int finalScore = (int) Math.round((employeeScore * 0.6) + (managerScore * 0.4));
+      out.add(Map.of(
+          "employeeId", emp.getId(),
+          "employeeName", emp.getName(),
+          "employeeScore", (int) Math.round(employeeScore),
+          "managerScore", (int) Math.round(managerScore),
+          "finalSkillScore", Math.max(0, Math.min(100, finalScore))
+      ));
+    }
+    out.sort((a, b) -> Integer.compare((Integer) b.get("finalSkillScore"), (Integer) a.get("finalSkillScore")));
+    return out;
+  }
+
+  private List<Map<String, Object>> detectRiskAlerts(List<Map<String, Object>> projectCoverage, long deptId) {
+    int threshold = 2;
+    List<Map<String, Object>> alerts = new ArrayList<>();
+    for (Map<String, Object> pr : projectCoverage) {
+      Long projectId = ((Number) pr.get("id")).longValue();
+      Project project = projects.findById(projectId).orElse(null);
+      if (project == null || project.getRequiredJobRole() == null) continue;
+      List<RequiredSkill> req = requiredSkills.findByJobRoleId(project.getRequiredJobRole().getId());
+      int criticalCount = 0;
+      List<AppUser> candidates = users.findDirectReportsExcludingManager(
+          deptId, Role.EMPLOYEE, -1L, ""
+      );
+      for (AppUser emp : candidates) {
+        var g = skillGapService.computeForEmployee(emp, req, employeeSkills.findByEmployeeId(emp.getId()));
+        criticalCount += g.redCount();
+      }
+      long deadlineInDays = daysToDeadline(project);
+      if (criticalCount > threshold && deadlineInDays < 30) {
+        alerts.add(Map.of(
+            "projectId", projectId,
+            "projectName", String.valueOf(pr.get("name")),
+            "criticalSkillGapCount", criticalCount,
+            "threshold", threshold,
+            "projectDeadlineDays", deadlineInDays,
+            "message", "Critical skill gaps exceed threshold while project window is under 30 days."
+        ));
+      }
+    }
+    return alerts;
+  }
+
+  private List<Map<String, Object>> bestFitEmployeesByProject(
+      List<Map<String, Object>> projectCoverage,
+      List<AppUser> team,
+      long deptId
+  ) {
+    List<Map<String, Object>> out = new ArrayList<>();
+    for (Map<String, Object> pr : projectCoverage) {
+      Long projectId = ((Number) pr.get("id")).longValue();
+      Project project = projects.findById(projectId).orElse(null);
+      if (project == null || project.getRequiredJobRole() == null) continue;
+      List<RequiredSkill> req = requiredSkills.findByJobRoleId(project.getRequiredJobRole().getId());
+      List<Map<String, Object>> ranked = team.stream().map(emp -> {
+        var g = skillGapService.computeForEmployee(emp, req, employeeSkills.findByEmployeeId(emp.getId()));
+        int score = g.gaps().stream().mapToInt(SkillGapService.SkillGapItem::gapRank).sum();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("employeeId", emp.getId());
+        m.put("employeeName", emp.getName());
+        m.put("gapScore", score);
+        return m;
+      }).sorted(Comparator.comparingInt(m -> (Integer) m.get("gapScore"))).limit(3).toList();
+      out.add(Map.of("projectId", projectId, "projectName", String.valueOf(pr.get("name")), "bestFits", ranked));
+    }
+    return out;
+  }
+
+  private List<String> restructuringOptions(List<Map<String, Object>> weightedScores) {
+    if (weightedScores.isEmpty()) return List.of("No team members available for restructuring analysis.");
+    List<String> out = new ArrayList<>();
+    Map<String, Object> top = weightedScores.get(0);
+    out.add("Use " + top.get("employeeName") + " as anchor for high-criticality workstreams.");
+    if (weightedScores.size() > 1) {
+      Map<String, Object> second = weightedScores.get(1);
+      out.add("Pair " + top.get("employeeName") + " with " + second.get("employeeName") + " for faster knowledge transfer.");
+    }
+    out.add("Allocate lower-score members to targeted training before assigning deadline-critical tasks.");
+    return out;
+  }
+
+  private List<Map<String, Object>> topSkillBottlenecks(List<AppUser> team) {
+    Map<String, Integer> counts = new HashMap<>();
+    for (AppUser emp : team) {
+      var gaps = skillGapService.computeForEmployee(emp);
+      gaps.gaps().stream()
+          .filter(g -> "RED".equals(g.color()) || "ORANGE".equals(g.color()))
+          .forEach(g -> counts.merge(g.skillName(), 1, Integer::sum));
+    }
+    return counts.entrySet().stream()
+        .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+        .limit(5)
+        .map(e -> {
+          Map<String, Object> m = new LinkedHashMap<>();
+          m.put("skillName", e.getKey());
+          m.put("criticalCount", e.getValue());
+          return m;
+        })
+        .toList();
+  }
+
+  private double levelToScore(SkillLevel level) {
+    return switch (level) {
+      case BEGINNER -> 25.0;
+      case INTERMEDIATE -> 55.0;
+      case ADVANCED -> 80.0;
+      case EXPERT -> 95.0;
+    };
   }
 
   @GetMapping("/training-assignments/pending")
@@ -259,8 +440,19 @@ public class ManagerController {
       row.put("name", pr.getName());
       row.put("requiredJobRoleId", pr.getRequiredJobRole() == null ? null : pr.getRequiredJobRole().getId());
       row.put("requiredJobRoleName", pr.getRequiredJobRole() == null ? null : pr.getRequiredJobRole().getName());
+      row.put("deadlineAt", pr.getDeadlineAt());
+      row.put("daysToDeadline", daysToDeadline(pr));
       return row;
     }).toList();
+  }
+
+  private static long daysToDeadline(Project project) {
+    Instant deadline = project.getDeadlineAt();
+    if (deadline != null) {
+      return Math.max(0, ChronoUnit.DAYS.between(Instant.now(), deadline));
+    }
+    long daysSinceCreated = ChronoUnit.DAYS.between(project.getCreatedAt(), Instant.now());
+    return Math.max(0, 30 - daysSinceCreated);
   }
 
   @PostMapping("/projects/{projectId}/auto-allocate")
@@ -312,6 +504,25 @@ public class ManagerController {
 
     audit.log("MANAGER_AUTO_ALLOCATE", "projectId=" + projectId + ", max=" + max);
     return Map.of("status", "ALLOCATED", "assignees", max);
+  }
+
+  @PutMapping("/projects/{projectId}/deadline")
+  @PreAuthorize("hasAuthority('MANAGER_PROJECT_ALLOCATE')")
+  @Transactional
+  public Map<String, Object> setProjectDeadline(
+      @PathVariable("projectId") Long projectId,
+      @RequestBody(required = false) ProjectDeadlineRequest req
+  ) {
+    Project project = projects.findById(projectId).orElseThrow(() -> new IllegalArgumentException("Invalid projectId"));
+    Instant deadline = null;
+    if (req != null && req.deadlineDate() != null && !req.deadlineDate().isBlank()) {
+      LocalDate d = LocalDate.parse(req.deadlineDate().trim());
+      deadline = d.atStartOfDay().toInstant(ZoneOffset.UTC);
+    }
+    project.setDeadlineAt(deadline);
+    projects.save(project);
+    audit.log("MANAGER_SET_PROJECT_DEADLINE", "projectId=" + projectId + ", deadline=" + (deadline == null ? "null" : deadline));
+    return Map.of("status", "UPDATED", "deadlineAt", project.getDeadlineAt(), "daysToDeadline", daysToDeadline(project));
   }
 
   private void clearDeptScopedAssignments(long projectId, long deptId) {
@@ -433,6 +644,7 @@ public class ManagerController {
 
   @PostMapping("/training-assignments/{id}/approve")
   @PreAuthorize("hasAuthority('MANAGER_TRAINING_APPROVE')")
+  @Transactional
   public Map<String, Object> approve(@PathVariable("id") Long id, @RequestBody(required = false) ReviewRequest req) {
     TrainingAssignment ta = trainingAssignments.findById(id).orElseThrow(() -> new IllegalArgumentException("Assignment not found"));
     AuthPrincipal principal = principal();
@@ -450,7 +662,7 @@ public class ManagerController {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "ASSIGNMENT_NOT_PENDING");
     }
     ta.setStatus(TrainingAssignment.Status.APPROVED);
-    ta.setReviewedBy(users.findById(principal.getUserId()).orElse(null));
+    ta.setReviewedBy(me);
     ta.setReviewedAt(Instant.now());
     if (req != null) ta.setReviewNote(req.note());
     trainingAssignments.save(ta);
@@ -470,5 +682,7 @@ public class ManagerController {
   ) {}
 
   public record ReviewRequest(String note) {}
+
+  public record ProjectDeadlineRequest(String deadlineDate) {}
 }
 

@@ -3,8 +3,8 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { HR_SIDEBAR_ITEMS as TAB_CONFIG, parseHrTab } from './dashboard/dashboardNavConfig.js'
 import { RoleAlerts, RoleCard, RoleTable, SmallBoxKpi } from './dashboard/dashboardRoleUi.jsx'
-import CsgtsModuleMap from './dashboard/CsgtsModuleMap.jsx'
-
+import ProjectGovernancePanel from '../components/ProjectGovernancePanel.jsx'
+import { downloadTextFile } from './admin/adminHelpers.js'
 const LEVELS = ['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT']
 
 export default function HrDashboard() {
@@ -16,11 +16,13 @@ export default function HrDashboard() {
     else setSearchParams({ tab: next }, { replace: true })
   }
   const [stats, setStats] = useState(null)
+  const [strategy, setStrategy] = useState(null)
   const [employees, setEmployees] = useState([])
   const [skills, setSkills] = useState([])
   const [jobRoles, setJobRoles] = useState([])
   const [trainingPrograms, setTrainingPrograms] = useState([])
   const [assignments, setAssignments] = useState([])
+  const [projects, setProjects] = useState([])
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
@@ -49,20 +51,24 @@ export default function HrDashboard() {
 
   async function loadAll() {
     setError('')
-    const [st, empRes, skillsRes, rolesRes, trainingsRes, asRes] = await Promise.all([
+    const [st, strategyRes, empRes, skillsRes, rolesRes, trainingsRes, asRes, projRes] = await Promise.all([
       api.get('/api/hr/stats'),
+      api.get('/api/hr/strategy'),
       api.get('/api/hr/employees'),
       api.get('/api/hr/skills'),
       api.get('/api/hr/job-roles'),
       api.get('/api/hr/training-programs'),
-      api.get('/api/hr/training-assignments')
+      api.get('/api/hr/training-assignments'),
+      api.get('/api/hr/projects')
     ])
     setStats(st.data)
+    setStrategy(strategyRes.data)
     setEmployees(empRes.data)
     setSkills(skillsRes.data)
     setJobRoles(rolesRes.data)
     setTrainingPrograms(trainingsRes.data)
     setAssignments(asRes.data)
+    setProjects(projRes.data || [])
     if (rolesRes.data.length && !reqRoleId) setReqRoleId(String(rolesRes.data[0].id))
     if (skillsRes.data.length && !reqSkillId) setReqSkillId(String(skillsRes.data[0].id))
     if (skillsRes.data.length && !tpSkillId) setTpSkillId(String(skillsRes.data[0].id))
@@ -281,6 +287,46 @@ export default function HrDashboard() {
     }
   }
 
+  async function createProject(payload) {
+    setBusy(true)
+    try {
+      await api.post('/api/hr/projects', payload || {})
+      await loadAll()
+      setMsg('Project created.')
+    } catch (e2) {
+      setError(e2?.response?.data?.error || 'PROJECT_CREATE_FAILED')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveProjectDeadlineValue(projectId, deadlineDate) {
+    setBusy(true)
+    try {
+      await api.put(`/api/hr/projects/${projectId}/deadline`, {
+        deadlineDate: deadlineDate || null
+      })
+      await loadAll()
+      setMsg('Project deadline updated.')
+    } catch (e2) {
+      setError(e2?.response?.data?.error || 'PROJECT_DEADLINE_UPDATE_FAILED')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function exportGapPrioritizationCsv() {
+    const rows = strategy?.gapPrioritization || []
+    const header = 'skillId,skillName,businessImpact,skillScarcity,projectDependency,priorityScore'
+    const lines = rows.map((r) =>
+      [r.skillId, r.skillName, r.businessImpact, r.skillScarcity, r.projectDependency, r.priorityScore]
+        .map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`)
+        .join(',')
+    )
+    downloadTextFile(`hr-gap-priorities-${new Date().toISOString().slice(0, 10)}.csv`, [header, ...lines].join('\n'))
+    setMsg('Gap prioritization CSV download started.')
+  }
+
   return (
     <>
       <div className="card bg-danger bg-gradient text-white mb-3 shadow-sm">
@@ -345,7 +391,69 @@ export default function HrDashboard() {
             Use the tabs to manage people, define skills and job requirements, publish training, and move requests through approval
             workflows.
           </div>
-          <CsgtsModuleMap role="HR" />
+          {strategy && (
+            <div className="row g-3 mb-3">
+              <div className="col-lg-4">
+                <RoleCard title="Organizational skill health" iconClass="bi-heart-pulse">
+                  <div className="display-6 fw-bold mb-1">{strategy.organizationalSkillHealthScore ?? 0}%</div>
+                  <p className="small text-body-secondary mb-0">{strategy.healthFormula}</p>
+                </RoleCard>
+              </div>
+              <div className="col-lg-4">
+                <RoleCard title="Training ROI" iconClass="bi-graph-up">
+                  <div className="h4 mb-1">{strategy.trainingRoi?.roi ?? 0}</div>
+                  <p className="small mb-1">Improvement: {strategy.trainingRoi?.performanceImprovement ?? 0}</p>
+                  <p className="small mb-1">Cost: {strategy.trainingRoi?.trainingCost ?? 0}</p>
+                  <p className="small text-body-secondary mb-0">{strategy.trainingRoiFormula}</p>
+                </RoleCard>
+              </div>
+              <div className="col-lg-4">
+                <RoleCard title="AI strategy signals" iconClass="bi-cpu">
+                  <p className="small mb-1">
+                    Future hiring needs (next quarter): <strong>{strategy.aiStrategy?.futureHiringNeedsNextQuarter ?? 0}</strong>
+                  </p>
+                  <p className="small mb-1">Demand trend: <strong>{strategy.aiStrategy?.skillDemandTrend || 'STABLE'}</strong></p>
+                  <p className="small text-body-secondary mb-0">{strategy.aiStrategy?.upskillingVsHiringRecommendation}</p>
+                </RoleCard>
+              </div>
+              <div className="col-12">
+                <RoleCard title="Gap prioritization model (Top skills)" iconClass="bi-funnel">
+                  <div className="d-flex justify-content-end mb-2">
+                    <button type="button" className="btn btn-sm btn-outline-secondary" onClick={exportGapPrioritizationCsv}>
+                      <i className="bi bi-download me-1" />
+                      Export CSV
+                    </button>
+                  </div>
+                  <p className="small text-body-secondary mb-2">{strategy.gapPrioritizationFormula}</p>
+                  <RoleTable>
+                    <thead>
+                      <tr>
+                        <th>Skill</th>
+                        <th>Business impact</th>
+                        <th>Skill scarcity</th>
+                        <th>Project dependency</th>
+                        <th>Priority score</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(strategy.gapPrioritization || []).map((r) => (
+                        <tr key={`${r.skillId}-${r.skillName}`}>
+                          <td>{r.skillName}</td>
+                          <td>{r.businessImpact}</td>
+                          <td>{r.skillScarcity}</td>
+                          <td>{r.projectDependency}</td>
+                          <td><strong>{r.priorityScore}</strong></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </RoleTable>
+                  <p className="small text-body-secondary mt-2 mb-0">
+                    Workflow: {(strategy.workflow || []).join(' → ')}
+                  </p>
+                </RoleCard>
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -813,6 +921,19 @@ export default function HrDashboard() {
                   ))}
                 </tbody>
               </RoleTable>
+            </RoleCard>
+          </div>
+          <div className="col-12">
+            <RoleCard title="Project deadlines (central management)" iconClass="bi-kanban">
+              <ProjectGovernancePanel
+                busy={busy}
+                loading={false}
+                projects={projects}
+                jobRoles={jobRoles}
+                onRefresh={loadAll}
+                onCreateProject={createProject}
+                onSaveProjectDeadline={saveProjectDeadlineValue}
+              />
             </RoleCard>
           </div>
         </div>

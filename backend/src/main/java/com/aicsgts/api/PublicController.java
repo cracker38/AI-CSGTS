@@ -2,6 +2,7 @@ package com.aicsgts.api;
 
 import com.aicsgts.repo.DepartmentRepository;
 import com.aicsgts.repo.JobRoleRepository;
+import com.aicsgts.repo.SkillRepository;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -16,10 +17,12 @@ public class PublicController {
 
   private final DepartmentRepository departments;
   private final JobRoleRepository jobRoles;
+  private final SkillRepository skills;
 
-  public PublicController(DepartmentRepository departments, JobRoleRepository jobRoles) {
+  public PublicController(DepartmentRepository departments, JobRoleRepository jobRoles, SkillRepository skills) {
     this.departments = departments;
     this.jobRoles = jobRoles;
+    this.skills = skills;
   }
 
   @GetMapping("/registration-options")
@@ -34,16 +37,16 @@ public class PublicController {
             "id", r.getId(),
             "name", r.getName()
         )).toList(),
+        "skills", skills.findAll().stream().map(s -> Map.of(
+            "id", s.getId(),
+            "name", s.getName(),
+            "category", s.getCategory() == null ? "" : s.getCategory()
+        )).toList(),
         "selfServiceRoles", List.of(
             Map.of(
-                "id", "MANAGER",
-                "label", "Manager",
-                "summary", "Team readiness, training approvals, and project staffing for your department."
-            ),
-            Map.of(
-                "id", "HR",
-                "label", "Human resources",
-                "summary", "Employee directory, skill taxonomy, training programs, and assignment workflows."
+                "id", "EMPLOYEE",
+                "label", "Employee",
+                "summary", "Only employee self-registration is public. Manager and HR accounts are created in the Admin dashboard."
             )
         )
     );

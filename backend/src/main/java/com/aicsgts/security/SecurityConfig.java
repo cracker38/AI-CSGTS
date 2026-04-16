@@ -62,7 +62,10 @@ public class SecurityConfig {
   }
 
   private CorsConfigurationSource corsConfigurationSource(String allowedOrigins) {
-    List<String> origins = Arrays.asList(allowedOrigins.split(","));
+    List<String> origins = Arrays.stream(allowedOrigins.split(","))
+        .map(String::trim)
+        .filter(s -> !s.isEmpty())
+        .toList();
 
     CorsConfiguration config = new CorsConfiguration();
     config.setAllowedOrigins(origins);

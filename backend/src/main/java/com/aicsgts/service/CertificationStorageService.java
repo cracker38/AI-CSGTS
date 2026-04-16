@@ -18,9 +18,17 @@ public class CertificationStorageService {
   }
 
   public String storeFile(long employeeId, String originalFilename, byte[] bytes) throws IOException {
+    return storeFileInFolder("certifications", employeeId, originalFilename, bytes);
+  }
+
+  public String storeCvFile(long employeeId, String originalFilename, byte[] bytes) throws IOException {
+    return storeFileInFolder("cvs", employeeId, originalFilename, bytes);
+  }
+
+  private String storeFileInFolder(String folder, long employeeId, String originalFilename, byte[] bytes) throws IOException {
     String safe = originalFilename == null ? "upload" : originalFilename.replaceAll("[^a-zA-Z0-9._-]", "_");
     if (safe.length() > 180) safe = safe.substring(0, 180);
-    String rel = "certifications/" + employeeId + "/" + UUID.randomUUID() + "_" + safe;
+    String rel = folder + "/" + employeeId + "/" + UUID.randomUUID() + "_" + safe;
     Path target = root.resolve(rel).normalize();
     if (!target.startsWith(root)) {
       throw new IOException("Invalid path");

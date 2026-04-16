@@ -36,6 +36,20 @@ public class AppUser {
   @JoinColumn(name = "job_role_id")
   private JobRole jobRole;
 
+  @Column(columnDefinition = "LONGTEXT")
+  private String cvText;
+
+  @Column(length = 500)
+  private String cvFileName;
+
+  @Column(length = 1000)
+  private String cvStoragePath;
+
+  @Column(length = 2000)
+  private String careerGoalsText;
+
+  private Instant cvUpdatedAt;
+
   private Instant createdAt = Instant.now();
 
   public Long getId() {
@@ -108,6 +122,46 @@ public class AppUser {
 
   public void setCreatedAt(Instant createdAt) {
     this.createdAt = createdAt;
+  }
+
+  public String getCvText() {
+    return cvText;
+  }
+
+  public void setCvText(String cvText) {
+    this.cvText = cvText;
+  }
+
+  public String getCvFileName() {
+    return cvFileName;
+  }
+
+  public void setCvFileName(String cvFileName) {
+    this.cvFileName = cvFileName;
+  }
+
+  public String getCvStoragePath() {
+    return cvStoragePath;
+  }
+
+  public void setCvStoragePath(String cvStoragePath) {
+    this.cvStoragePath = cvStoragePath;
+  }
+
+  public String getCareerGoalsText() {
+    return careerGoalsText;
+  }
+
+  public void setCareerGoalsText(String careerGoalsText) {
+    this.careerGoalsText = careerGoalsText;
+  }
+
+  public Instant getCvUpdatedAt() {
+    return cvUpdatedAt;
+  }
+
+  public void setCvUpdatedAt(Instant cvUpdatedAt) {
+    this.cvUpdatedAt = cvUpdatedAt;
   }
 }
 

@@ -22,3 +22,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Local upload artifacts
+backend/ai-csgts-uploads/

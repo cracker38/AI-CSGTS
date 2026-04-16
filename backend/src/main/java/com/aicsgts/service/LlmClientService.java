@@ -3,22 +3,28 @@ package com.aicsgts.service;
 import com.aicsgts.config.AiProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 /**
- * Minimal OpenAI-compatible chat client (also works with Ollama /v1 when exposed).
+ * OpenAI-compatible chat client (works with many gateways and local /v1 servers).
  */
 @Service
 public class LlmClientService {
+
+  private static final Logger log = LoggerFactory.getLogger(LlmClientService.class);
 
   private final AiProperties props;
   private final ObjectMapper objectMapper;
@@ -33,8 +39,14 @@ public class LlmClientService {
       return Optional.empty();
     }
     String base = props.getOpenaiBaseUrl().trim().replaceAll("/+$", "");
+    SimpleClientHttpRequestFactory rf = new SimpleClientHttpRequestFactory();
+    int ms = Math.max(5_000, props.getTimeoutSeconds() * 1000);
+    rf.setConnectTimeout(Duration.ofMillis(ms));
+    rf.setReadTimeout(Duration.ofMillis(ms));
+
     RestClient client = RestClient.builder()
         .baseUrl(base)
+        .requestFactory(rf)
         .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + props.getOpenaiApiKey().trim())
         .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
         .build();
@@ -47,6 +59,9 @@ public class LlmClientService {
         Map.of("role", "system", "content", systemPrompt),
         Map.of("role", "user", "content", userPrompt)
     ));
+    if (props.isJsonResponseFormat()) {
+      body.put("response_format", Map.of("type", "json_object"));
+    }
 
     try {
       String raw = client.post()
@@ -55,15 +70,26 @@ public class LlmClientService {
           .retrieve()
           .body(String.class);
       if (raw == null || raw.isBlank()) {
+        log.warn("LLM returned empty response body");
         return Optional.empty();
       }
       JsonNode root = objectMapper.readTree(raw);
+      JsonNode err = root.path("error").path("message");
+      if (err.isTextual() && !err.asText().isBlank()) {
+        log.warn("LLM API error: {}", err.asText());
+        return Optional.empty();
+      }
       JsonNode content = root.path("choices").path(0).path("message").path("content");
       if (!content.isTextual()) {
+        log.warn("LLM response missing message content");
         return Optional.empty();
       }
       return Optional.of(stripCodeFences(content.asText().trim()));
-    } catch (RestClientException | java.io.IOException e) {
+    } catch (RestClientException e) {
+      log.warn("LLM request failed: {}", e.getMessage());
+      return Optional.empty();
+    } catch (java.io.IOException e) {
+      log.warn("LLM response parse failed: {}", e.getMessage());
       return Optional.empty();
     }
   }

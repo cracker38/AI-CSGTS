@@ -19,6 +19,11 @@ public class AiProperties {
 
   private int timeoutSeconds = 60;
 
+  /**
+   * When true, sends OpenAI {@code response_format: json_object} for stricter JSON (disable for some local/Ollama setups).
+   */
+  private boolean jsonResponseFormat = true;
+
   /** When true, never calls the LLM even if a key is set. */
   private boolean forceDisabled = false;
 
@@ -56,6 +61,14 @@ public class AiProperties {
 
   public void setTimeoutSeconds(int timeoutSeconds) {
     this.timeoutSeconds = timeoutSeconds;
+  }
+
+  public boolean isJsonResponseFormat() {
+    return jsonResponseFormat;
+  }
+
+  public void setJsonResponseFormat(boolean jsonResponseFormat) {
+    this.jsonResponseFormat = jsonResponseFormat;
   }
 
   public boolean isForceDisabled() {

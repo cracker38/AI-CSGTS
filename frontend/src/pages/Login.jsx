@@ -135,7 +135,7 @@ export default function Login({ onLogin }) {
           </button>
 
           <div className="muted">
-            Need a leadership account? <Link to="/register">Register as Manager or HR</Link>
+            New to the platform? <Link to="/register">Create your AI-CSGTS account</Link>
           </div>
           <p className="muted" style={{ marginTop: '0.75rem', fontSize: '0.85rem', lineHeight: 1.45 }}>
             Employee accounts are issued by an administrator — this link is only for Manager and HR self-enrollment.

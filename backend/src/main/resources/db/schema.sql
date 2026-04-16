@@ -52,6 +52,11 @@ CREATE TABLE users (
   active BIT NOT NULL DEFAULT 1,
   department_id BIGINT NULL,
   job_role_id BIGINT NULL,
+  cv_text LONGTEXT NULL,
+  cv_file_name VARCHAR(500) NULL,
+  cv_storage_path VARCHAR(1000) NULL,
+  career_goals_text VARCHAR(2000) NULL,
+  cv_updated_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_users_department FOREIGN KEY (department_id) REFERENCES departments(id),
   CONSTRAINT fk_users_job_role FOREIGN KEY (job_role_id) REFERENCES job_roles(id)
@@ -109,6 +114,7 @@ CREATE TABLE projects (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   required_job_role_id BIGINT NULL,
+  deadline_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_projects_required_job_role FOREIGN KEY (required_job_role_id) REFERENCES job_roles(id)
 );

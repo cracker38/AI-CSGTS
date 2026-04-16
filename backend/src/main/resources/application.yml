@@ -27,15 +27,20 @@ app:
   upload:
     dir: ${APP_UPLOAD_DIR:${user.dir}/ai-csgts-uploads}
   # Optional OpenAI-compatible API (OpenAI, Azure OpenAI passthrough, Ollama with /v1, etc.).
-  # When openai-api-key is non-blank and force-disabled is false, HR job-description NLP and employee AI insights call the model and fall back to heuristics on any error.
+  # Set APP_AI_OPENAI_API_KEY (preferred) or OPENAI_API_KEY in environment (do not commit keys).
+  # When the key is set and force-disabled is false,
+  # HR job-description NLP and employee AI insights call the model and fall back to heuristics on any error.
+  # For Ollama or servers that reject json_object mode, set AI_JSON_RESPONSE_FORMAT=false
   ai:
     openai-base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
-    openai-api-key: ${OPENAI_API_KEY:}
+    openai-api-key: ${APP_AI_OPENAI_API_KEY:${OPENAI_API_KEY:}}
     model: ${OPENAI_MODEL:gpt-4o-mini}
     timeout-seconds: 60
-    force-disabled: false
+    json-response-format: ${AI_JSON_RESPONSE_FORMAT:true}
+    force-disabled: ${APP_AI_FORCE_DISABLED:false}
   cors:
-    allowed-origins: "http://localhost:5173,http://localhost:3000"
+    # Include common Vite ports and 127.0.0.1 (browser may use either). In dev, prefer Vite proxy so calls stay same-origin.
+    allowed-origins: "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,http://localhost:3000"
   jwt:
     issuer: "ai-csgts"
     secret: "CHANGE_ME_TO_A_LONG_RANDOM_SECRET_32CHARS_MIN"

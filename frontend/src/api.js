@@ -11,7 +11,10 @@ function normalizeApiBaseUrl(raw) {
   return trimmed.replace(/\/api$/i, '')
 }
 
-const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080')
+const API_BASE_URL =
+  import.meta.env.DEV && String(import.meta.env.VITE_API_BASE_URL || '').trim() === ''
+    ? ''
+    : normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080')
 
 export const api = axios.create({
   baseURL: API_BASE_URL

@@ -28,9 +28,9 @@ public class JobDescriptionNlpService {
   private static final Pattern BULLET_LINE = Pattern.compile("^\\s*([•\\-\\*•]|\\d+\\.\\s).+");
 
   private static final String JD_SYSTEM = """
-      You extract structure from job descriptions. Reply with ONLY valid JSON, no markdown.
-      Schema: {"summary":"2-4 sentences","responsibilities":["bullet strings"],"requirements":["bullet strings"],"skillPhrases":["concrete tools, frameworks, certifications, methods"]}
-      Use empty arrays if unknown. skillPhrases: short noun phrases only, no sentences.""";
+      You extract structure from IT job descriptions for competency mapping. Reply with ONLY valid JSON, no markdown or commentary.
+      Schema: {"summary":"2-4 factual sentences","responsibilities":["concise bullet strings"],"requirements":["concise bullet strings"],"skillPhrases":["tools, frameworks, certifications, methods as short phrases"]}
+      Use empty arrays if unknown. skillPhrases must be noun phrases only (e.g. "Kubernetes", "CI/CD"), not full sentences. Do not invent credentials.""";
 
   private final SkillRepository skillRepository;
   private final LlmClientService llmClient;
@@ -62,8 +62,9 @@ public class JobDescriptionNlpService {
     if (raw.isEmpty()) {
       return local;
     }
+    String jsonPayload = LlmJsonExtractor.firstJsonObject(raw.get()).orElse(raw.get());
     try {
-      JsonNode n = objectMapper.readTree(raw.get());
+      JsonNode n = objectMapper.readTree(jsonPayload);
       Map<String, Object> merged = new LinkedHashMap<>(local);
       Map<String, Object> llmBlock = parseLlmJson(n);
       merged.put("llm", llmBlock);

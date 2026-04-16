@@ -18,6 +18,9 @@ public class Project {
   @JoinColumn(name = "required_job_role_id")
   private JobRole requiredJobRole;
 
+  @Column(name = "deadline_at")
+  private Instant deadlineAt;
+
   private Instant createdAt = Instant.now();
 
   public Long getId() {
@@ -50,6 +53,14 @@ public class Project {
 
   public void setCreatedAt(Instant createdAt) {
     this.createdAt = createdAt;
+  }
+
+  public Instant getDeadlineAt() {
+    return deadlineAt;
+  }
+
+  public void setDeadlineAt(Instant deadlineAt) {
+    this.deadlineAt = deadlineAt;
   }
 }
 

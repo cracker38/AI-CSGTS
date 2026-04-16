@@ -12,5 +12,7 @@ public interface ProjectAssignmentRepository extends JpaRepository<ProjectAssign
   long countByProjectIdAndEmployeeDepartmentIdAndEmployeeRole(Long projectId, Long deptId, Role role);
 
   List<ProjectAssignment> findByProject_IdOrderByPositionAscIdAsc(Long projectId);
+
+  List<ProjectAssignment> findByEmployee_IdOrderByAssignedAtDesc(Long employeeId);
 }
 

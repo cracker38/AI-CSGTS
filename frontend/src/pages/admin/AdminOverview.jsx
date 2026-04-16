@@ -1,5 +1,4 @@
 import React from 'react'
-import CsgtsModuleMap from '../dashboard/CsgtsModuleMap.jsx'
 import { formatInstant } from './adminHelpers.js'
 
 function roleAccent(role) {
@@ -251,8 +250,6 @@ export default function AdminOverview({ stats, roleBars, deptBars, auditRecent, 
           </ol>
         )}
       </section>
-
-      <CsgtsModuleMap role="ADMIN" />
     </div>
   )
 }

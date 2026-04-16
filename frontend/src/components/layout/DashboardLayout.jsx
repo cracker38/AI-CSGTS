@@ -67,6 +67,10 @@ export default function DashboardLayout({ me, onLogout, children }) {
   const initial = (me?.name || 'U').trim().charAt(0).toUpperCase()
   const roleLabel = (me?.role && ROLE_LABELS[me.role]) || (me?.role ? me.role.charAt(0) + me.role.slice(1).toLowerCase() : '')
 
+  /** Hash routes: "overview" is active when path matches and there is no real hash segment (NavLink ignores unknown `isActive` matcher in RR6 — it was forwarded to `<a>`). */
+  const employeeOverviewActive = pathname === '/employee' && !(hash && hash.length > 1)
+  const managerOverviewActive = pathname === '/manager' && !(hash && hash.length > 1)
+
   const [activity, setActivity] = useState({ badgeCount: 0, items: [] })
 
   const loadActivitySummary = useCallback(async () => {
@@ -296,9 +300,8 @@ export default function DashboardLayout({ me, onLogout, children }) {
                         {item.hash === '' ? (
                           <NavLink
                             to="/employee"
-                            className={({ isActive }) => `nav-link d-flex align-items-center ${isActive ? 'active' : ''}`}
-                            isActive={(_, loc) =>
-                              loc.pathname === '/employee' && !(loc.hash && loc.hash.length > 1)
+                            className={() =>
+                              `nav-link d-flex align-items-center ${employeeOverviewActive ? 'active' : ''}`
                             }
                           >
                             <i className={`nav-icon bi ${item.icon}`} />
@@ -323,9 +326,8 @@ export default function DashboardLayout({ me, onLogout, children }) {
                         {item.hash === '' ? (
                           <NavLink
                             to="/manager"
-                            className={({ isActive }) => `nav-link d-flex align-items-center ${isActive ? 'active' : ''}`}
-                            isActive={(_, loc) =>
-                              loc.pathname === '/manager' && !(loc.hash && loc.hash.length > 1)
+                            className={() =>
+                              `nav-link d-flex align-items-center ${managerOverviewActive ? 'active' : ''}`
                             }
                           >
                             <i className={`nav-icon bi ${item.icon}`} />
